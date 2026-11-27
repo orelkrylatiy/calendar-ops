@@ -1,4 +1,4 @@
-const CACHE='calendar-ops-shell-v3'
+const CACHE='calendar-ops-shell-v4'
 self.addEventListener('install',event=>event.waitUntil((async()=>{
   const cache=await caches.open(CACHE)
   const response=await fetch('/',{cache:'reload'})
@@ -16,7 +16,7 @@ self.addEventListener('activate',event=>event.waitUntil((async()=>{
 self.addEventListener('fetch',event=>{
   const url=new URL(event.request.url)
   if(event.request.method!=='GET'||url.origin!==self.location.origin||url.pathname.startsWith('/api/'))return
-  if(event.request.mode==='navigate'&&url.pathname==='/'){
+  if(event.request.mode==='navigate'&&['/','/calendar'].includes(url.pathname)){
     event.respondWith(fetch(event.request).catch(()=>caches.match('/')));return
   }
   if(url.pathname.startsWith('/assets/')||['/icon.svg','/manifest.webmanifest'].includes(url.pathname)){

@@ -74,3 +74,7 @@ See [platform implementation notes](platform/ARCHITECTURE.md).
 ## License
 
 MIT. The original Schedule-X project is copyright Tom Österlund (2023–present). See [LICENSE](LICENSE), [upstream](https://github.com/schedule-x/schedule-x), and [Schedule-X docs](https://schedule-x.dev/).
+
+## Workspace v2
+
+Calendar-first interface with light/dark theme, `/calendar` full-screen view, separate statistics and help, collapsible availability, keyboard shortcuts (N/A), click/right-click/desktop range selection and current-time indicator. Create students in Participants without registration; admin can issue or revoke 30-day private schedule URLs or seven-day one-use activation links. No plaintext passwords are stored. Shared schedules omit payment details. Local password minimum is six characters; secure-cookie deployments require 12 for new credentials. Use long unique passwords even locally. Dependency audit workflow records full and runtime audit reports and proposes compatible lockfile updates; it does not automatically apply them.
