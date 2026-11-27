@@ -17,7 +17,7 @@ A scheduling workspace for tutoring teams, based on the open-source [Schedule-X]
 
 ## Local development
 
-Requires Node.js 22.13+ for the platform (Node 22 recommended) and npm.
+Requires Node.js 22.22.2+ (Node 22 LTS) for the platform (Node 22 recommended) and npm.
 
 ```bash
 npm ci
