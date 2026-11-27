@@ -73,7 +73,7 @@ describe('ListWrapper', () => {
   beforeEach(() => {
     cleanup()
     vi.clearAllMocks()
-    window.IntersectionObserver = vi.fn().mockImplementation(() => {
+    window.IntersectionObserver = vi.fn().mockImplementation(function () {
       return {
         observe: vi.fn(),
         disconnect: vi.fn(),

@@ -8,7 +8,11 @@ import resolve from '@rollup/plugin-node-resolve'
 import commonjs from '@rollup/plugin-commonjs'
 import babel from '@rollup/plugin-babel'
 import image from '@rollup/plugin-image'
-import ts from 'rollup-plugin-ts'
+import { createRequire } from 'node:module'
+// Use the CommonJS build: the legacy ESM distribution uses JSON import assertions removed in Node 22.
+const require = createRequire(import.meta.url)
+const tsModule = require('rollup-plugin-ts')
+const ts = tsModule.default || tsModule
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
