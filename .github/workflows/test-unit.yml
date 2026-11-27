@@ -7,7 +7,7 @@ on:
       - 'package-lock.json'
   push:
     branches:
-      - master
+      - main
 
 jobs:
   test_london:
@@ -28,9 +28,9 @@ jobs:
         with:
           timezoneLinux: 'Europe/London'
       - name: Install dependencies 🛠️
-        run: npm i
+        run: npm ci
       - name: Run Vitest 🧪
-        run: npm run test:unit:changed -- -- --silent
+        run: npm run test:unit:all -- --silent
 
   test_mountain_view:
     name: Mountain View time
@@ -50,9 +50,9 @@ jobs:
         with:
           timezoneLinux: 'US/Pacific'
       - name: Install dependencies 🛠️
-        run: npm i
+        run: npm ci
       - name: Run Vitest 🧪
-        run: npm run test:unit:changed -- -- --silent
+        run: npm run test:unit:all -- --silent
 
   test_tokyo:
     name: Tokyo time
@@ -72,6 +72,6 @@ jobs:
         with:
           timezoneLinux: 'Asia/Tokyo'
       - name: Install dependencies 🛠️
-        run: npm i
+        run: npm ci
       - name: Run Vitest 🧪
-        run: npm run test:unit:changed -- -- --silent
+        run: npm run test:unit:all -- --silent

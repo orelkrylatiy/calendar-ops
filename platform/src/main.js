@@ -45,7 +45,7 @@ function loginPage(){
   form.append(field('Логин',input('username','text',{autocomplete:'username'})),field('Пароль',input('password','password',{minlength:'12',autocomplete:registration?'new-password':'current-password'})))
   if(registration)form.prepend(field('Имя',input('name')),field('Пригласительный код',input('code')))
   form.append(el('button',{class:'primary',type:'submit'},registration?'Создать аккаунт':'Войти'))
-  form.addEventListener('submit',async e=>{e.preventDefault();try{const data=Object.fromEntries(new FormData(form));await api(registration?'register':'login','POST',data);dropCache();await refresh()}catch(error){notice(error.message)}})
+  form.addEventListener('submit',async e=>{e.preventDefault();try{const data=Object.fromEntries(new FormData(form));await api(registration?'register':'login','POST',data);dropCache();view='calendar';selectedTutor='';await refresh()}catch(error){notice(error.message)}})
   root.append(el('main',{class:'login'},el('section',{class:'hero'},brand(),el('div',{class:'hero-art','aria-hidden':'true'},'✳',el('span',{},'◉')),el('h1',{},'Время — в порядке.'),el('p',{},'Единое пространство для занятий, репетиторов и учеников.')),el('section',{class:'auth'},el('div',{class:'auth-inner'},el('div',{class:'eyebrow'},'РАБОЧЕЕ ПРОСТРАНСТВО / 01'),el('h2',{},registration?'Присоединиться':'С возвращением'),el('p',{class:'muted'},registration?'Введите код, полученный у администратора.':'Войдите, чтобы открыть расписание.'),form,button(registration?'Уже есть аккаунт':'У меня есть код',()=>{authMode=registration?'login':'register';loginPage()},'link'),el('p',{id:'notice',role:'status',class:'notice'}))))
 }
 const fmt=new Intl.DateTimeFormat('ru-RU',{dateStyle:'medium',timeStyle:'short'})
@@ -89,7 +89,7 @@ function board(host){
 function render(){
   dispose();root.replaceChildren()
   const admin=account.role==='admin'&&!offline&&!embed
-  const sidebar=el('aside',{class:'sidebar'},brand(),el('div',{class:'workspace'},el('span',{class:'avatar'},account.name.slice(0,1).toUpperCase()),el('div',{},el('strong',{},account.name),el('small',{},roles[account.role]))),el('nav',{},button('▦  Календарь',()=>{view='calendar';render()},view==='calendar'?'active':'nav'),button('▤  Доска',()=>{view='board';render()},view==='board'?'active':'nav'),admin?button('♧  Участники',()=>{view='users';render()},view==='users'?'active':'nav'):null),el('div',{class:'sidebar-bottom'},el('span',{class:'muted'},offline?'● Офлайн':'● Подключено'),button(offline?'Закрыть офлайн':'Выйти',async()=>{dropCache();if(!offline)try{await api('logout','POST')}catch(error){notice(error.message);return}account=null;lessons=[];users=[];offline=false;loginPage()},'nav')))
+  const sidebar=el('aside',{class:'sidebar'},brand(),el('div',{class:'workspace'},el('span',{class:'avatar'},account.name.slice(0,1).toUpperCase()),el('div',{},el('strong',{},account.name),el('small',{},roles[account.role]))),el('nav',{},button('▦  Календарь',()=>{view='calendar';render()},view==='calendar'?'active':'nav'),button('▤  Доска',()=>{view='board';render()},view==='board'?'active':'nav'),admin?button('♧  Участники',()=>{view='users';render()},view==='users'?'active':'nav'):null),el('div',{class:'sidebar-bottom'},el('span',{class:'muted'},offline?'● Офлайн':'● Подключено'),button(offline?'Закрыть офлайн':'Выйти',async()=>{dropCache();if(!offline)try{await api('logout','POST')}catch(error){notice(error.message);return}account=null;lessons=[];users=[];offline=false;view='calendar';selectedTutor='';loginPage()},'nav')))
   const toolbar=el('div',{class:'toolbar'},el('div',{},el('div',{class:'eyebrow'},'WORKSPACE / '+roles[account.role].toUpperCase()),el('h1',{},view==='users'?'Участники':view==='board'?'Доска занятий':'Расписание')),el('div',{class:'actions'},admin?button('Пригласить',inviteDialog):null,admin?button('+ Занятие',()=>lessonDialog(),'primary'):null))
   const main=el('main',{class:'workspace-main'},toolbar,el('div',{id:'notice',role:'status',class:'notice'},offline?'Офлайн-копия. Изменения недоступны.':'')) 
   if(!embed&&!offline){const toggle=el('input',{type:'checkbox'});toggle.checked=optedIn();toggle.addEventListener('change',()=>{if(toggle.checked){try{localStorage.setItem(CACHE+'-enabled','1');snapshot()}catch{notice('Хранилище недоступно')}}else dropCache()});main.append(el('label',{class:'offline-option'},toggle,'Сохранять расписание на этом устройстве для офлайн-доступа'))}
@@ -109,7 +109,7 @@ function render(){
 }
 async function refresh(){
   try{
-    const me=await api('me');account=me.user
+    const me=await api('me');if(account&&account.id!==me.user.id){dropCache();view='calendar';selectedTutor=''};account=me.user
     lessons=(await api('lessons')).lessons
     users=account.role==='admin'&&!embed?(await api('users')).users:[]
     offline=false;snapshot();render()

@@ -8,7 +8,8 @@
   "scripts": {
     "build": "vite build",
     "start": "node server.mjs",
-    "test": "node --test",
-    "check": "node --check server.mjs && node --check src/main.js && node --check public/sw.js"
+    "test": "node --test test/*.integration.mjs",
+    "check": "node --check server.mjs && node --check src/main.js && node --check public/sw.js",
+    "lint": "eslint --config eslint.config.mjs server.mjs src public/sw.js test"
   }
 }

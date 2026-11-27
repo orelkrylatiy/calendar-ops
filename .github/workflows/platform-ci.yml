@@ -7,7 +7,7 @@ on:
       - 'package*.json'
       - '.github/workflows/platform-ci.yml'
   push:
-    branches: [main, 'feat/calendar-ops-platform']
+    branches: [main]
     paths:
       - 'platform/**'
       - 'packages/**'
@@ -31,5 +31,41 @@ jobs:
           HUSKY: '0'
           CYPRESS_INSTALL_BINARY: '0'
       - run: npm --prefix platform run check
+      - run: npm --prefix platform run lint
       - run: npm --prefix platform test
       - run: npm --prefix platform run build
+  browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+        env:
+          HUSKY: '0'
+      - run: npm --prefix platform run build
+      - name: Run desktop and mobile smoke tests
+        env:
+          CALENDAR_ADMIN_USER: owner
+          CALENDAR_ADMIN_PASSWORD: local-browser-test-password
+          CALENDAR_DB: ':memory:'
+        run: |
+          npm --prefix platform start > /tmp/calendar-ops.log 2>&1 &
+          trap 'kill $! 2>/dev/null || true' EXIT
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:4173/ > /dev/null; then break; fi
+            sleep 1
+          done
+          curl -fsS http://127.0.0.1:4173/ > /dev/null
+          npx --no-install cypress run --config-file platform/cypress.config.cjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: calendar-ops-browser
+          path: |
+            platform/e2e/screenshots
+            /tmp/calendar-ops.log
+          if-no-files-found: ignore

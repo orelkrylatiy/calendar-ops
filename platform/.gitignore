@@ -2,3 +2,5 @@ data/
 dist/
 .env
 *.sqlite*
+e2e/screenshots/
+e2e/videos/

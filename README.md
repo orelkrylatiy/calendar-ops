@@ -43,6 +43,7 @@ For a new tutor/student, create an invitation as administrator, then share the c
 
 ```bash
 npm --prefix platform run check
+npm --prefix platform run lint
 npm --prefix platform test
 npm --prefix platform run build
 npm run test:unit:all
@@ -50,7 +51,7 @@ npm run lint:all
 npm run lint:scss
 ```
 
-Platform CI runs syntax checks, HTTP integration tests, and build. Existing library CI is separate.
+Platform CI runs syntax checks, ESLint, HTTP integration tests, the production build, and desktop/mobile Cypress smoke tests. Existing library CI is separate.
 
 ## API and deployment
 
@@ -62,7 +63,7 @@ For deployment, configure HTTPS at a reverse proxy, `CALENDAR_ORIGIN` to the exa
 
 ## Roadmap / limits
 
-Single-school MVP, not yet multi-tenant SaaS. PostgreSQL migration, organization-scoped permissions, recurring lessons, tutor availability, notifications, OAuth/OIDC, external embed tokens and SDK, versioned offline write synchronization, invitation revocation, account recovery, browser E2E and production hardening remain future work. The board is a chronological card view, not a freeform canvas.
+Single-school MVP, not yet multi-tenant SaaS. PostgreSQL migration, organization-scoped permissions, recurring lessons, tutor availability, notifications, OAuth/OIDC, external embed tokens and SDK, versioned offline write synchronization, invitation revocation, account recovery, expanded browser E2E and production hardening remain future work. The board is a chronological card view, not a freeform canvas.
 
 See [platform implementation notes](platform/ARCHITECTURE.md).
 

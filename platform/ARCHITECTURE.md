@@ -14,7 +14,7 @@ Offline mode is read-only. Opt-in stores personal schedule data in browser local
 
 ## Next milestones
 
-1. Browser E2E: desktop/mobile, invitation flows, role isolation, offline and DST scenarios. Production deployment, monitoring, rate limits, secure recovery.
+1. Extend browser E2E to offline, DST, access revocation, and failure scenarios (basic desktop/mobile and invitation smoke test included). Production deployment, monitoring, rate limits, secure recovery.
 2. PostgreSQL + organizations/memberships, tenant isolation, tutor-level permissions, recurrence and availability; preserve the versioned API.
 3. Signed, short-lived, audience-bound embed sessions, origin allowlist and explicit frame policy; integration contract and webhooks.
 4. Offline edits only after versioning, idempotency, conflict-resolution and safe account switching are implemented.
