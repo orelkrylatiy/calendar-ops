@@ -1,0 +1,35 @@
+name: Calendar Ops CI
+on:
+  pull_request:
+    paths:
+      - 'platform/**'
+      - 'packages/**'
+      - 'package*.json'
+      - '.github/workflows/platform-ci.yml'
+  push:
+    branches: [main, 'feat/calendar-ops-platform']
+    paths:
+      - 'platform/**'
+      - 'packages/**'
+      - 'package*.json'
+      - '.github/workflows/platform-ci.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  platform:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+        env:
+          HUSKY: '0'
+          CYPRESS_INSTALL_BINARY: '0'
+      - run: npm --prefix platform run check
+      - run: npm --prefix platform test
+      - run: npm --prefix platform run build

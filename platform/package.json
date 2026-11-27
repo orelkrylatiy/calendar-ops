@@ -1,0 +1,14 @@
+{
+  "name": "calendar-ops-platform",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.13"
+  },
+  "scripts": {
+    "build": "vite build",
+    "start": "node server.mjs",
+    "test": "node --test",
+    "check": "node --check server.mjs && node --check src/main.js && node --check public/sw.js"
+  }
+}

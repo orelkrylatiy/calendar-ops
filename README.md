@@ -1,51 +1,71 @@
-<p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="website/public/images/brand/schedule-x-logo-dark.png">
-    <img
-      src="website/public/images/brand/schedule-x-logo-light.png"
-      alt="Schedule-X"
-      width="648"
-    />
-  </picture>
-</p>
+# Calendar Ops
 
-[![Build Status](https://github.com/schedule-x/schedule-x/actions/workflows/build-library.yml/badge.svg)](https://github.com/schedule-x/schedule-x/actions/workflows/build-library.yml)
-[![Chat](https://img.shields.io/badge/chat-on%20discord-7289da.svg?sanitize=true)](https://discord.gg/yHbT3C4M8w)
-[![npm](https://img.shields.io/npm/dm/@schedule-x/calendar)](https://www.npmjs.com/package/@schedule-x/calendar)
-[![X](https://img.shields.io/twitter/url?url=https://x.com/ScheduleX_&label=Follow%20on%20X)](https://x.com/ScheduleX_)
+A scheduling workspace for tutoring teams, based on the open-source [Schedule-X](https://github.com/schedule-x/schedule-x) calendar library (v4.9.2 at fork baseline).
 
-# The modern JavaScript event calendar
+**Status:** MVP foundation in development. The original library and documentation remain available; the product lives separately in `platform/`.
 
-Schedule-X is an event calendar focused on covering the needs of modern web apps: responsive design, 
-internationalization, and extensibility. You can ship it with default settings in a matter of minutes, or customize
-it to look- and work like you want. If you're using a JS-framework, you can even inject components written in your 
-own framework, into the UI of the calendar. Currently, there are components for the following frameworks:
+## Product
 
-[React](https://schedule-x.dev/docs/frameworks/react) | [Angular](https://schedule-x.dev/docs/frameworks/angular) | [Vue](https://schedule-x.dev/docs/frameworks/vue) | [Svelte](https://schedule-x.dev/docs/frameworks/svelte) | [Preact](https://schedule-x.dev/docs/frameworks/preact)
+- Administrator: invite tutors and students, view all lessons, filter by tutor, create, reschedule, complete or cancel lessons.
+- Tutor and student: sign in and view only their own lessons. Invitation codes are one-time, role-bound and expire after seven days.
+- Schedule-X day/week/month/list calendar and a chronological board; responsive Russian UI.
+- Optional offline read-only snapshot on a trusted device; no offline write synchronization.
 
-Website for documentation and demo: https://schedule-x.dev/
+## Local development
 
-![Schedule-X calendar demo](https://schedule-x.s3.eu-west-1.amazonaws.com/schedule-x-demo-readme-480p-15fps.gif)
+Requires Node.js 22.13+ for the platform (Node 22 recommended) and npm.
 
-## Contact
+```bash
+npm ci
+npm --prefix platform run build
+export CALENDAR_ADMIN_USER=owner
+# choose your own strong password, at least 12 characters
+read -rs -p "Admin password: " CALENDAR_ADMIN_PASSWORD; echo
+export CALENDAR_ADMIN_PASSWORD
+npm --prefix platform start
+```
 
-For bug reports and feature requests, please use the issue tracker of this repository.
+Open http://127.0.0.1:4173. The first run creates the owner in `platform/data/calendar.sqlite`. Bootstrap credentials are not used to overwrite an existing account. Do not commit the database or passwords.
 
-For any other questions or comments, feel free to join the chat on Discord: https://discord.gg/yHbT3C4M8w
+For a new tutor/student, create an invitation as administrator, then share the code privately. The invitee chooses "У меня есть код" on the sign-in page.
 
-## Sponsoring
+## Architecture
 
-The longevity and success of this project benefits from financial support, mainly to cover compute- and DNS costs.
+`platform/server.mjs`: dependency-free Node HTTP API + SQLite, server-side role checks, scrypt passwords, hashed opaque sessions, transactional invitations and lesson conflict detection, audit records.
 
-Sponsor today, and get mentioned in the README or on the project website: https://opencollective.com/schedule-x
+`platform/src/`: Vite frontend built on the forked Schedule-X source; board and admin controls are product-specific.
+
+`platform/public/`: service worker and installable app manifest. API responses are never service-worker cached. Offline snapshots are opt-in, local-device readable, and cleared on logout or a confirmed invalid session. Do not enable on shared devices.
+
+`packages/`: upstream calendar engine, plugins, and themes. `website/`: upstream docs/demo. Upstream MIT copyright and license are preserved.
+
+## Checks
+
+```bash
+npm --prefix platform run check
+npm --prefix platform test
+npm --prefix platform run build
+npm run test:unit:all
+npm run lint:all
+npm run lint:scss
+```
+
+Platform CI runs syntax checks, HTTP integration tests, and build. Existing library CI is separate.
+
+## API and deployment
+
+The JSON API is under `/api/v1/`: login, register, logout, me, users, invites, lessons. Authentication uses HttpOnly SameSite=Lax session cookies; write requests require matching Origin and `X-Calendar-Client: 1`.
+
+For deployment, configure HTTPS at a reverse proxy, `CALENDAR_ORIGIN` to the exact public origin, `CALENDAR_SECURE_COOKIE=1`, persistent storage at `CALENDAR_DB`, and strong owner credentials. Host binds to loopback by default; `HOST` and `PORT` override that. Back up the SQLite database consistently. No public registration, default accounts, or production deployment is enabled.
+
+`/embed` exposes a same-origin, authenticated, read-only UI without the sidebar. Cross-origin embedding requires a future signed-token flow and explicit allowed origins; it is deliberately not enabled yet.
+
+## Roadmap / limits
+
+Single-school MVP, not yet multi-tenant SaaS. PostgreSQL migration, organization-scoped permissions, recurring lessons, tutor availability, notifications, OAuth/OIDC, external embed tokens and SDK, versioned offline write synchronization, invitation revocation, account recovery, browser E2E and production hardening remain future work. The board is a chronological card view, not a freeform canvas.
+
+See [platform implementation notes](platform/ARCHITECTURE.md).
 
 ## License
 
-MIT
-
-Copyright (c) 2023 - present, Tom Österlund
-
-## Code contributions & project insights
-
-Code contributions are welcome, but require communication. Please read [CONTRIBUTING.md](https://github.com/schedule-x/schedule-x/blob/main/.github/contributing.md) and open an issue before 
-opening a PR.
+MIT. The original Schedule-X project is copyright Tom Österlund (2023–present). See [LICENSE](LICENSE), [upstream](https://github.com/schedule-x/schedule-x), and [Schedule-X docs](https://schedule-x.dev/).
