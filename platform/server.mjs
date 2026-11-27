@@ -56,6 +56,23 @@ async function body(req) {
 }
 const mime = {'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8','.json':'application/json','.webmanifest':'application/manifest+json','.svg':'image/svg+xml','.woff2':'font/woff2'}
 
+// Half-open UTC ranges: subtract the union of booked intervals from each declared slot.
+export function subtractBusy(slots,busy){
+  const byTutor=new Map()
+  for(const item of busy){if(!byTutor.has(item.tutor_id))byTutor.set(item.tutor_id,[]);byTutor.get(item.tutor_id).push(item)}
+  const free=[]
+  for(const slot of slots){
+    let cursor=slot.start
+    const relevant=(byTutor.get(slot.tutor_id)||[]).filter(b=>b.start<slot.end&&b.end>slot.start).sort((a,b)=>a.start.localeCompare(b.start))
+    for(const b of relevant){
+      if(b.start>cursor)free.push({tutor_id:slot.tutor_id,start:cursor,end:b.start})
+      if(b.end>cursor)cursor=b.end
+      if(cursor>=slot.end)break
+    }
+    if(cursor<slot.end)free.push({tutor_id:slot.tutor_id,start:cursor,end:slot.end})
+  }
+  return free
+}
 export function createApp({dbPath=process.env.CALENDAR_DB || resolve(here,'data/calendar.sqlite'), adminUser=process.env.CALENDAR_ADMIN_USER, adminPassword=process.env.CALENDAR_ADMIN_PASSWORD, secure=process.env.CALENDAR_SECURE_COOKIE==='1', origin=process.env.CALENDAR_ORIGIN, staticDir=resolve(here,'dist')}={}) {
   if(dbPath !== ':memory:') mkdirSync(dirname(resolve(dbPath)),{recursive:true,mode:0o700})
   const db = new DatabaseSync(dbPath)
@@ -87,6 +104,14 @@ export function createApp({dbPath=process.env.CALENDAR_DB || resolve(here,'data/
         CREATE INDEX lesson_student ON lessons(student_id,start,end);`)
     })
   }
+  tx(()=>{
+    const columns=new Set(all('PRAGMA table_info(lessons)').map(c=>c.name))
+    if(!columns.has('lesson_type')) db.exec("ALTER TABLE lessons ADD COLUMN lesson_type TEXT NOT NULL DEFAULT 'regular' CHECK(lesson_type IN ('regular','trial'))")
+    if(!columns.has('payment_status')) db.exec("ALTER TABLE lessons ADD COLUMN payment_status TEXT NOT NULL DEFAULT 'unpaid' CHECK(payment_status IN ('unpaid','paid'))")
+    if(!columns.has('receipt_received')) db.exec('ALTER TABLE lessons ADD COLUMN receipt_received INTEGER NOT NULL DEFAULT 0 CHECK(receipt_received IN (0,1))')
+  })
+  db.exec(`CREATE TABLE IF NOT EXISTS availability(id TEXT PRIMARY KEY,tutor_id TEXT NOT NULL REFERENCES users(id),start TEXT NOT NULL,end TEXT NOT NULL,CHECK(start<end));
+    CREATE INDEX IF NOT EXISTS availability_tutor ON availability(tutor_id,start,end);`)
   db.exec(`CREATE TABLE IF NOT EXISTS tutor_students(tutor_id TEXT NOT NULL REFERENCES users(id), student_id TEXT NOT NULL REFERENCES users(id), PRIMARY KEY(tutor_id,student_id));
     INSERT OR IGNORE INTO tutor_students SELECT DISTINCT tutor_id,student_id FROM lessons;`)
   if (!get("SELECT id FROM users WHERE role='admin' LIMIT 1")) {
@@ -128,14 +153,19 @@ export function createApp({dbPath=process.env.CALENDAR_DB || resolve(here,'data/
       const input={...previous,...data}
       const title=clean(input.title), tutor=clean(input.tutor_id ?? (account.role==='tutor'?account.id:undefined)), student=clean(input.student_id)
       if(account.role==='tutor'&&(tutor!==account.id||!get('SELECT 1 FROM tutor_students WHERE tutor_id=? AND student_id=?',account.id,student))) fail(403,'Ученик не закреплён за вами')
-      const start=date(input.start), end=date(input.end), status=input.status ?? 'tentative'
+      const type=input.lesson_type ?? 'regular', payment=input.payment_status ?? 'unpaid', receipt=input.receipt_received ?? 0
+      if(!['regular','trial'].includes(type)) fail(400,'Некорректный тип занятия')
+      if(!['paid','unpaid'].includes(payment)||![0,1].includes(receipt)) fail(400,'Некорректная отметка оплаты')
+      if(previous&&previous.student_id!==student&&(previous.payment_status==='paid'||previous.receipt_received===1||payment==='paid'||receipt===1)) fail(409,'Сначала сбросьте оплату и отметку чека у прежнего ученика')
+      const start=date(input.start), status=input.status ?? 'tentative'
+      const end=date(input.end ?? (!previous?new Date(Date.parse(start)+(type==='trial'?30:60)*60000).toISOString():undefined))
       if(start>=end || Date.parse(end)-Date.parse(start)>86400000) fail(400,'Проверьте длительность')
       if(!['tentative','confirmed','completed','cancelled','no_show'].includes(status)) fail(400,'Некорректный статус')
       if(get('SELECT role FROM users WHERE id=?',tutor)?.role!=='tutor'||get('SELECT role FROM users WHERE id=?',student)?.role!=='student') fail(400,'Выберите преподавателя и ученика')
       if(status!=='cancelled'&&get("SELECT id FROM lessons WHERE status!='cancelled' AND id!=? AND (tutor_id=? OR student_id=?) AND start<? AND end>?",id||'',tutor,student,end,start)) fail(409,'В это время преподаватель или ученик уже занят')
       const lessonId=id||randomUUID()
-      if(id) run('UPDATE lessons SET title=?,tutor_id=?,student_id=?,start=?,end=?,status=? WHERE id=?',title,tutor,student,start,end,status,id)
-      else run('INSERT INTO lessons VALUES(?,?,?,?,?,?,?)',lessonId,title,tutor,student,start,end,status)
+      if(id) run('UPDATE lessons SET title=?,tutor_id=?,student_id=?,start=?,end=?,status=?,lesson_type=?,payment_status=?,receipt_received=? WHERE id=?',title,tutor,student,start,end,status,type,payment,receipt,id)
+      else run('INSERT INTO lessons(id,title,tutor_id,student_id,start,end,status,lesson_type,payment_status,receipt_received) VALUES(?,?,?,?,?,?,?,?,?,?)',lessonId,title,tutor,student,start,end,status,type,payment,receipt)
       if(account.role==='admin') run('INSERT OR IGNORE INTO tutor_students VALUES(?,?)',tutor,student)
       const lesson=get('SELECT * FROM lessons WHERE id=?',lessonId)
       run('INSERT INTO audit(actor,action,lesson_id,before,after,created) VALUES(?,?,?,?,?,?)',account.id,id?'updated':'created',lessonId,previous?JSON.stringify(previous):null,JSON.stringify(lesson),new Date().toISOString())
@@ -209,6 +239,31 @@ export function createApp({dbPath=process.env.CALENDAR_DB || resolve(here,'data/
       const code=token(),expires=Date.now()+7*86400000
       run('INSERT INTO invites(hash,role,expires) VALUES(?,?,?)',hash(code),role,expires)
       return json(res,201,{code,expires:new Date(expires).toISOString(),role})
+    }
+    if(method==='GET'&&path==='/api/v1/availability'){
+      if(account.role==='student') fail(403,'Недостаточно прав')
+      const slots=account.role==='admin'?all('SELECT * FROM availability ORDER BY start'):all('SELECT * FROM availability WHERE tutor_id=? ORDER BY start',account.id)
+      const busy=account.role==='admin'?all("SELECT tutor_id,start,end FROM lessons WHERE status!='cancelled' ORDER BY start"):all("SELECT tutor_id,start,end FROM lessons WHERE status!='cancelled' AND tutor_id=? ORDER BY start",account.id)
+      return json(res,200,{slots,free:subtractBusy(slots,busy)})
+    }
+    const slotMatch=path.match(/^\/api\/v1\/availability\/([a-f0-9-]{36})$/)
+    if((method==='POST'&&path==='/api/v1/availability')||(slotMatch&&['PATCH','DELETE'].includes(method))){
+      if(account.role!=='tutor') fail(403,'Доступность меняет только сам репетитор')
+      const data=method==='DELETE'?{}:await body(req)
+      const result=tx(()=>{
+        const id=slotMatch?.[1], previous=id?get('SELECT * FROM availability WHERE id=? AND tutor_id=?',id,account.id):null
+        if(id&&!previous) fail(404,'Интервал не найден')
+        if(method==='DELETE'){run('DELETE FROM availability WHERE id=?',id);return {ok:true}}
+        const start=date(data.start??previous?.start),end=date(data.end??previous?.end)
+        if(start>=end||Date.parse(end)-Date.parse(start)>86400000) fail(400,'Интервал должен быть от 1 минуты до 24 часов')
+        if(Date.parse(end)-Date.parse(start)<60000) fail(400,'Интервал должен быть не короче минуты')
+        if(get('SELECT id FROM availability WHERE tutor_id=? AND id!=? AND start<? AND end>?',account.id,id||'',end,start)) fail(409,'Интервал пересекается с существующей доступностью')
+        const key=id||randomUUID()
+        if(id)run('UPDATE availability SET start=?,end=? WHERE id=?',start,end,key)
+        else run('INSERT INTO availability VALUES(?,?,?,?)',key,account.id,start,end)
+        return {slot:get('SELECT * FROM availability WHERE id=?',key)}
+      })
+      return json(res,method==='POST'?201:200,result)
     }
     if(method==='GET'&&path==='/api/v1/lessons'){
       const clause=account.role==='admin'?'':account.role==='tutor'?' WHERE l.tutor_id=?':' WHERE l.student_id=?'

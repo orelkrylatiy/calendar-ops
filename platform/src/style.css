@@ -34,3 +34,29 @@
 .sr-only{position:absolute;width:1px;height:1px;padding:0;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
 @media(max-width:1050px){.metrics{grid-template-columns:repeat(auto-fit,minmax(135px,1fr))}}
 @media(max-width:600px){.metrics{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.metric{padding:10px;gap:5px}.metric strong{font-size:26px}.filter label{flex:1 1 130px}.filter{gap:8px}.calendar-legend{gap:7px 12px}.calendar-legend .status-badge{font-size:11px}.date-fields{grid-template-columns:1fr}.actions{width:100%}.actions button{flex:1 1 auto}.dialog{padding:16px}.detail-grid{grid-template-columns:1fr;gap:5px}.detail-grid dd{margin-bottom:10px}}
+
+/* Type, payment and availability are separate visual layers. */
+.lesson-event.type-trial,.lesson.type-trial{background:#ede9fe!important;color:#4c1d95!important;border-color:#7c3aed!important}
+.lesson-event.type-trial.status-tentative,.lesson.type-trial.status-tentative{border:1.5px dashed #7c3aed!important}
+.lesson-event.type-trial.status-cancelled,.lesson.type-trial.status-cancelled{opacity:.65;text-decoration:line-through}
+.lesson-event.type-trial .sx__list-event-color-line{background:#7c3aed!important}
+.lesson-event.type-trial.status-tentative .sx__list-event-color-line{background:transparent!important}
+.lesson-badges{display:flex;align-items:center;gap:6px;flex-wrap:wrap;min-width:0}
+.type-badge,.payment-badge,.receipt-badge{display:inline-flex;align-items:center;gap:5px;padding:3px 7px;border-radius:6px;font-size:11px;line-height:1.4;font-weight:650;white-space:normal}
+.type-badge.type-trial{color:#5b21b6;background:#ede9fe;border:1px solid #c4b5fd}
+.type-badge.type-regular{color:#444;background:#f1f1ef}
+.payment-badge.payment-paid,.receipt-badge{color:#166534;background:#dcfce7}
+.payment-badge.payment-unpaid{color:#92400e;background:#fef3c7}
+.payment-panel{margin:0;padding:12px;border:1px solid var(--line);border-radius:12px;min-width:0;display:grid;gap:12px}
+.payment-panel legend{padding:0 6px;font-weight:650}
+.payment-panel .receipt-option{display:flex;align-items:center;gap:8px;font-size:13px;font-weight:500}
+.payment-panel .receipt-option input{width:18px;height:18px;flex:none}
+.dialog{width:min(510px,calc(100% - 24px))}
+.availability-panel{border:1px solid #bbf7d0;background:#f0fdf4;padding:12px;border-radius:12px;margin:0 0 16px;display:grid;gap:9px}
+.availability-heading{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
+.availability-heading h3{font-size:14px;color:#166534}.availability-heading p,.availability-hint{font-size:12px;line-height:1.5}
+.availability-hint{color:#666;margin:0 0 12px}
+.availability-list{display:grid;gap:5px;max-height:180px;overflow:auto}
+.availability-row{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:6px 8px;background:#fff;border-radius:8px;font-size:12px;min-width:0}
+.availability-row span{overflow-wrap:anywhere}.availability-row button{font-size:12px;padding:6px 9px;flex:none}
+@media(max-width:600px){.lesson-badges{gap:4px}.payment-panel{padding:9px}.dialog .form{gap:12px}.availability-panel{padding:9px}}

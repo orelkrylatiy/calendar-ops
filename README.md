@@ -9,6 +9,9 @@ A scheduling workspace for tutoring teams, based on the open-source [Schedule-X]
 - Administrator: invite tutors and students, view all lessons, filter by tutor, student or status, assign students to tutors, create and reschedule lessons.
 - Tutor: manage lessons with assigned students; student: read-only access to their own lessons. Invitation codes are one-time, role-bound and expire after seven days.
 - Lesson statuses: tentative (dashed, reserves the slot), confirmed (blue), completed (green), cancelled (muted), no-show (amber). Old scheduled lessons migrate to confirmed.
+- Independent paid/unpaid tracking and optional manual receipt-received flag. Admins and assigned tutors edit; students read their own. No payment processing or receipt uploads.
+- Trial lessons: violet background, 30-minute default; regular lessons: 60-minute default. Quick 30/45/60/90-minute presets and custom end times.
+- Tutor-managed date-specific availability; admin selects a tutor to see free intervals highlighted in the day/week calendar. Active lessons are subtracted; cancellation releases the slot. Scheduling outside declared availability remains allowed.
 - Schedule-X day/week/month/list calendar and a chronological board; responsive Russian UI.
 - Optional offline read-only snapshot on a trusted device; no offline write synchronization.
 
@@ -56,15 +59,15 @@ Platform CI runs syntax checks, ESLint, HTTP integration tests, the production b
 
 ## API and deployment
 
-The JSON API is under `/api/v1/`: login, register, logout, me, users, students, assignments, invites, lessons. Authentication uses HttpOnly SameSite=Lax session cookies; write requests require matching Origin and `X-Calendar-Client: 1`.
+The JSON API is under `/api/v1/`: login, register, logout, me, users, students, assignments, invites, lessons, availability. Authentication uses HttpOnly SameSite=Lax session cookies; write requests require matching Origin and `X-Calendar-Client: 1`.
 
-For deployment, configure HTTPS at a reverse proxy, `CALENDAR_ORIGIN` to the exact public origin, `CALENDAR_SECURE_COOKIE=1`, persistent storage at `CALENDAR_DB`, and strong owner credentials. Host binds to loopback by default; `HOST` and `PORT` override that. Back up the SQLite database consistently. No public registration, default accounts, or production deployment is enabled.
+For deployment, configure HTTPS at a reverse proxy, `CALENDAR_ORIGIN` to the exact public origin, `CALENDAR_SECURE_COOKIE=1`, persistent storage at `CALENDAR_DB`, and strong owner credentials. Host binds to loopback by default; `HOST` and `PORT` override that. Back up SQLite before schema updates. Existing lessons migrate to regular/unpaid with receipt not marked; verify historical payments manually. No public registration, default accounts, or production deployment is enabled.
 
 `/embed` exposes a same-origin, authenticated, read-only UI without the sidebar. Cross-origin embedding requires a future signed-token flow and explicit allowed origins; it is deliberately not enabled yet.
 
 ## Roadmap / limits
 
-Single-school MVP, not yet multi-tenant SaaS. PostgreSQL migration, organization-scoped permissions, student unassignment, recurring lessons, tutor availability, notifications, OAuth/OIDC, external embed tokens and SDK, versioned offline write synchronization, invitation revocation, account recovery, expanded browser E2E and production hardening remain future work. The board is a chronological card view, not a freeform canvas.
+Single-school MVP, not yet multi-tenant SaaS. PostgreSQL migration, organization-scoped permissions, student unassignment, recurring lessons, recurring availability, notifications, OAuth/OIDC, external embed tokens and SDK, versioned offline write synchronization, invitation revocation, account recovery, expanded browser E2E and production hardening remain future work. The board is a chronological card view, not a freeform canvas.
 
 See [platform implementation notes](platform/ARCHITECTURE.md).
 

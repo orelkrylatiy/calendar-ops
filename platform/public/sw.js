@@ -1,4 +1,4 @@
-const CACHE='calendar-ops-shell-v2'
+const CACHE='calendar-ops-shell-v3'
 self.addEventListener('install',event=>event.waitUntil((async()=>{
   const cache=await caches.open(CACHE)
   const response=await fetch('/',{cache:'reload'})

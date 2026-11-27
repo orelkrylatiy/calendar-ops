@@ -18,3 +18,7 @@ Offline mode is read-only. Opt-in stores personal schedule data in browser local
 2. PostgreSQL + organizations/memberships, tenant isolation, tutor-level permissions, recurrence and availability; preserve the versioned API.
 3. Signed, short-lived, audience-bound embed sessions, origin allowlist and explicit frame policy; integration contract and webhooks.
 4. Offline edits only after versioning, idempotency, conflict-resolution and safe account switching are implemented.
+
+## Payments, lesson types and availability
+
+Payment and receipt flags are manual and independent of lesson status; no real payment or document verification. Audit records include changes. Existing lessons migrate to regular/unpaid; review historical payments. Trial lessons use a violet background and default to 30 minutes; regular defaults to 60. Availability is date-specific and tutor-owned. Admins can read all slots and derived free segments; students cannot access availability. Subtract non-cancelled bookings using UTC half-open intervals. Admin scheduling outside availability is allowed; double-booking remains forbidden. Weekly recurrence and offline availability editing are not implemented.

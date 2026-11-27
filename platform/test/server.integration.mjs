@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { createApp } from '../server.mjs'
+import { createApp, subtractBusy } from '../server.mjs'
 import { DatabaseSync } from 'node:sqlite'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -36,6 +36,31 @@ test('role isolation, invite lifecycle, conflicts, audit-safe cancellation and l
   assert.equal(lesson.status,201)
   assert.equal((await request('lessons','POST',payload,admin.cookie)).status,409)
   assert.equal(lesson.data.lesson.status,'tentative')
+  assert.equal(lesson.data.lesson.lesson_type,'regular')
+  assert.equal(lesson.data.lesson.payment_status,'unpaid')
+  const lessonPath='lessons/'+lesson.data.lesson.id
+  assert.equal((await request(lessonPath,'PATCH',{payment_status:'paid'},student.cookie)).status,403)
+  const paid=await request(lessonPath,'PATCH',{payment_status:'paid',receipt_received:1},tutor.cookie)
+  assert.equal(paid.status,200)
+  assert.equal(paid.data.lesson.payment_status,'paid')
+  assert.equal(paid.data.lesson.receipt_received,1)
+  assert.equal((await request(lessonPath,'PATCH',{student_id:other.data.user.id},admin.cookie)).status,409)
+  assert.equal((await request(lessonPath,'PATCH',{payment_status:'invalid'},admin.cookie)).status,400)
+  const reset=await request(lessonPath,'PATCH',{payment_status:'unpaid',receipt_received:0},admin.cookie)
+  assert.equal(reset.data.lesson.payment_status,'unpaid')
+  const window={start:'2026-12-01T09:00:00.000Z',end:'2026-12-01T12:00:00.000Z'}
+  assert.equal((await request('availability','POST',window,admin.cookie)).status,403)
+  const slot=await request('availability','POST',window,tutor.cookie)
+  assert.equal(slot.status,201)
+  assert.equal((await request('availability','POST',window,tutor.cookie)).status,409)
+  assert.equal((await request('availability','GET',undefined,student.cookie)).status,403)
+  const availability=await request('availability','GET',undefined,admin.cookie)
+  assert.equal(availability.data.free.length,2)
+  assert.equal(availability.data.free[0].end,payload.start)
+  assert.equal(availability.data.free[1].start,payload.end)
+  assert.equal((await request('availability/'+slot.data.slot.id,'PATCH',{end:'2026-12-01T13:00:00.000Z'},tutor.cookie)).status,200)
+  assert.equal((await request('availability/'+slot.data.slot.id,'DELETE',undefined,admin.cookie)).status,403)
+  assert.equal((await request('availability/'+slot.data.slot.id,'DELETE',undefined,tutor.cookie)).status,200)
   assert.equal((await request('lessons','POST',payload,tutor.cookie)).status,409)
   assert.equal((await request('lessons','POST',{...payload,student_id:other.data.user.id},tutor.cookie)).status,403)
   assert.equal((await request('students','GET',undefined,tutor.cookie)).data.students.length,1)
@@ -55,6 +80,12 @@ test('role isolation, invite lifecycle, conflicts, audit-safe cancellation and l
   assert.equal((await request('assignments','POST',{tutor_id:tutor.data.user.id,student_id:other.data.user.id},admin.cookie)).status,201)
   const next={...payload,student_id:other.data.user.id,start:'2026-12-01T11:00:00.000Z',end:'2026-12-01T12:00:00.000Z',status:'no_show'}
   assert.equal((await request('lessons','POST',next,tutor.cookie)).status,201)
+  const trial=await request('lessons','POST',{...payload,start:'2026-12-01T12:00:00.000Z',end:undefined,lesson_type:'trial'},tutor.cookie)
+  assert.equal(trial.status,201)
+  assert.equal(trial.data.lesson.end,'2026-12-01T12:30:00.000Z')
+  const normal=await request('lessons','POST',{...payload,start:'2026-12-01T12:30:00.000Z',end:undefined},tutor.cookie)
+  assert.equal(normal.status,201)
+  assert.equal(normal.data.lesson.end,'2026-12-01T13:30:00.000Z')
   assert.equal((await request('students','GET',undefined,tutor.cookie)).data.students.length,2)
   assert.equal((await request('lessons','GET',undefined,other.cookie)).data.lessons.length,1)
   assert.equal((await request('logout','POST',undefined,student.cookie)).status,200)
@@ -75,7 +106,17 @@ test('legacy scheduled lessons migrate to confirmed, preserving IDs and tutor re
   await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve))
   await new Promise(resolve=>server.close(resolve))
   const migrated=new DatabaseSync(dbPath)
-  assert.equal(migrated.prepare("SELECT status FROM lessons WHERE id='old'").get().status,'confirmed')
+  const old=migrated.prepare("SELECT * FROM lessons WHERE id='old'").get()
+  assert.equal(old.status,'confirmed')
+  assert.equal(old.lesson_type,'regular')
+  assert.equal(old.payment_status,'unpaid')
+  assert.equal(old.receipt_received,0)
   assert.equal(migrated.prepare("SELECT student_id FROM tutor_students WHERE tutor_id='t'").get().student_id,'s')
   migrated.close()
+})
+
+test('availability subtraction handles adjacent, overlapping and unrelated bookings',()=>{
+  const slot={tutor_id:'a',start:'2026-12-01T09:00:00.000Z',end:'2026-12-01T14:00:00.000Z'}
+  const busy=[{...slot,start:'2026-12-01T10:00:00.000Z',end:'2026-12-01T11:00:00.000Z'},{...slot,start:'2026-12-01T10:30:00.000Z',end:'2026-12-01T12:00:00.000Z'},{...slot,tutor_id:'b'}]
+  assert.deepEqual(subtractBusy([slot],busy),[{...slot,end:'2026-12-01T10:00:00.000Z'},{...slot,start:'2026-12-01T12:00:00.000Z'}])
 })
