@@ -22,8 +22,8 @@ const username = value => {
   if (!/^[a-z0-9._@+-]{3,80}$/.test(name)) fail(400, 'Логин: 3–80 латинских символов')
   return name
 }
-const password = value => {
-  if (typeof value !== 'string' || value.length < 12 || value.length > 128) fail(400, 'Пароль: 12–128 символов')
+const password = (value,min=6) => {
+  if (typeof value !== 'string' || value.length < min || value.length > 128) fail(400, 'Пароль: '+min+'–128 символов')
   return value
 }
 const clean = (value, max = 120) => {
@@ -93,6 +93,9 @@ export function createApp({dbPath=process.env.CALENDAR_DB || resolve(here,'data/
     try {const value=fn();db.exec('COMMIT');return value}
     catch(e){db.exec('ROLLBACK');throw e}
   }
+  const minPassword=secure?12:6
+  tx(()=>{if(!all('PRAGMA table_info(users)').some(c=>c.name==='guest'))db.exec('ALTER TABLE users ADD COLUMN guest INTEGER NOT NULL DEFAULT 0 CHECK(guest IN (0,1))')})
+  db.exec(`CREATE TABLE IF NOT EXISTS student_access(hash TEXT PRIMARY KEY,student_id TEXT NOT NULL REFERENCES users(id),kind TEXT NOT NULL CHECK(kind IN ('claim','share')),expires INTEGER NOT NULL,UNIQUE(student_id,kind));`)
   // Upgrade databases created by the original MVP without losing lesson IDs or audit history.
   if (!get("SELECT sql FROM sqlite_master WHERE type='table' AND name='lessons'").sql.includes("'tentative'")) {
     tx(()=>{
@@ -115,8 +118,8 @@ export function createApp({dbPath=process.env.CALENDAR_DB || resolve(here,'data/
   db.exec(`CREATE TABLE IF NOT EXISTS tutor_students(tutor_id TEXT NOT NULL REFERENCES users(id), student_id TEXT NOT NULL REFERENCES users(id), PRIMARY KEY(tutor_id,student_id));
     INSERT OR IGNORE INTO tutor_students SELECT DISTINCT tutor_id,student_id FROM lessons;`)
   if (!get("SELECT id FROM users WHERE role='admin' LIMIT 1")) {
-    if (!adminUser || !adminPassword) {db.close();throw new Error('Set CALENDAR_ADMIN_USER and CALENDAR_ADMIN_PASSWORD (12+ characters) for first start')}
-    run('INSERT INTO users VALUES(?,?,?,?,?)',randomUUID(),username(adminUser),'Администратор','admin',passwordHash(password(adminPassword)))
+    if (!adminUser || !adminPassword) {db.close();throw new Error('Set CALENDAR_ADMIN_USER and CALENDAR_ADMIN_PASSWORD (6+ locally, 12+ with secure cookies) for first start')}
+    run('INSERT INTO users(id,username,name,role,password) VALUES(?,?,?,?,?)',randomUUID(),username(adminUser),'Администратор','admin',passwordHash(password(adminPassword,minPassword)))
   }
   const cookie = (value, age) => 'calendar_session='+value+'; Path=/; HttpOnly; SameSite=Lax; Max-Age='+age+(secure?'; Secure':'')
   const sessionToken = req => (req.headers.cookie||'').match(/(?:^|;\s*)calendar_session=([A-Za-z0-9_-]+)/)?.[1]
@@ -180,7 +183,7 @@ export function createApp({dbPath=process.env.CALENDAR_DB || resolve(here,'data/
     if(!path.startsWith('/api/')) {
       if(!['GET','HEAD'].includes(req.method)) fail(405,'Метод недоступен')
       const root=resolve(staticDir)
-      const file=resolve(root,'.'+(path==='/'||path==='/embed'?'/index.html':decodeURIComponent(path)))
+      const file=resolve(root,'.'+(path==='/'||path==='/embed'||path==='/calendar'||path==='/schedule'?'/index.html':decodeURIComponent(path)))
       if(!file.startsWith(root+sep)) fail(404,'Не найдено')
       try {
         if(!statSync(file).isFile()) fail(404,'Не найдено')
@@ -193,9 +196,18 @@ export function createApp({dbPath=process.env.CALENDAR_DB || resolve(here,'data/
       const expected=origin||(secure?'https://':'http://')+req.headers.host
       if(req.headers['x-calendar-client']!=='1'||req.headers.origin!==expected) fail(403,'Недопустимый источник запроса')
     }
+    if(method==='GET'&&path==='/api/v1/config')return json(res,200,{minPassword})
+    if(method==='POST'&&path==='/api/v1/shared-schedule'){
+      limit(req);const input=await body(req)
+      const grant=get("SELECT student_id FROM student_access WHERE hash=? AND kind='share' AND expires>?",hash(clean(input.code,100)),Date.now())
+      if(!grant)fail(404,'Ссылка недействительна или истекла')
+      const student=get('SELECT id,name FROM users WHERE id=?',grant.student_id)
+      const lessons=all(selectLessons+' WHERE l.student_id=? ORDER BY l.start',student.id).map(({id,title,start,end,status,lesson_type,tutor_name,student_name})=>({id,title,start,end,status,lesson_type,tutor_name,student_name}))
+      return json(res,200,{student,lessons})
+    }
     if(method==='POST'&&path==='/api/v1/login'){
       limit(req);const input=await body(req)
-      const account=get('SELECT * FROM users WHERE username=?',username(input.username))
+      const account=get('SELECT * FROM users WHERE username=? AND guest=0',username(input.username))
       const ok=validPassword(password(input.password),account?.password||dummyHash)
       if(!account||!ok) fail(401,'Неверный логин или пароль')
       return login(req,res,account)
@@ -203,12 +215,21 @@ export function createApp({dbPath=process.env.CALENDAR_DB || resolve(here,'data/
     if(method==='POST'&&path==='/api/v1/register'){
       limit(req);const input=await body(req)
       const account=tx(()=>{
-        const code=hash(clean(input.code,100)), invite=get('SELECT * FROM invites WHERE hash=? AND used=0 AND expires>?',code,Date.now())
+        const code=hash(clean(input.code,100)), claim=get("SELECT student_id FROM student_access WHERE hash=? AND kind='claim' AND expires>?",code,Date.now())
+        if(claim){
+          const handle=username(input.username),pass=passwordHash(password(input.password,minPassword))
+          if(get('SELECT id FROM users WHERE username=?',handle))fail(409,'Логин занят')
+          if(!get('SELECT id FROM users WHERE id=? AND guest=1',claim.student_id))fail(400,'Аккаунт уже активирован')
+          run('UPDATE users SET username=?,password=?,guest=0 WHERE id=?',handle,pass,claim.student_id)
+          run('DELETE FROM student_access WHERE hash=?',code)
+          return get('SELECT * FROM users WHERE id=?',claim.student_id)
+        }
+        const invite=get('SELECT * FROM invites WHERE hash=? AND used=0 AND expires>?',code,Date.now())
         if(!invite) fail(400,'Код недействителен или уже использован')
-        const name=clean(input.name), handle=username(input.username), pass=passwordHash(password(input.password))
+        const name=clean(input.name), handle=username(input.username), pass=passwordHash(password(input.password,minPassword))
         if(get('SELECT id FROM users WHERE username=?',handle)) fail(409,'Логин занят')
         const id=randomUUID()
-        run('INSERT INTO users VALUES(?,?,?,?,?)',id,handle,name,invite.role,pass)
+        run('INSERT INTO users(id,username,name,role,password) VALUES(?,?,?,?,?)',id,handle,name,invite.role,pass)
         run('UPDATE invites SET used=1 WHERE hash=?',code)
         return get('SELECT * FROM users WHERE id=?',id)
       })
@@ -220,12 +241,37 @@ export function createApp({dbPath=process.env.CALENDAR_DB || resolve(here,'data/
     }
     if(method==='GET'&&path==='/api/v1/me') return json(res,200,{user:account})
     if(method==='GET'&&path==='/api/v1/users'){
-      admin(account);return json(res,200,{users:all('SELECT id,username,name,role FROM users ORDER BY name')})
+      admin(account);return json(res,200,{users:all('SELECT id,username,name,role,guest FROM users ORDER BY name')})
     }
     if(method==='GET'&&path==='/api/v1/students'){
       if(account.role==='student') fail(403,'Недостаточно прав')
-      const students=account.role==='admin'?all("SELECT id,name,role FROM users WHERE role='student' ORDER BY name"):all("SELECT u.id,u.name,u.role FROM users u JOIN tutor_students ts ON u.id=ts.student_id WHERE ts.tutor_id=? ORDER BY u.name",account.id)
+      const students=account.role==='admin'?all("SELECT id,name,role,guest FROM users WHERE role='student' ORDER BY name"):all("SELECT u.id,u.name,u.role,u.guest FROM users u JOIN tutor_students ts ON u.id=ts.student_id WHERE ts.tutor_id=? ORDER BY u.name",account.id)
       return json(res,200,{students})
+    }
+    if(method==='POST'&&path==='/api/v1/students'){
+      if(!['admin','tutor'].includes(account.role))fail(403,'Недостаточно прав')
+      const data=await body(req),name=clean(data.name),tutor=account.role==='tutor'?account.id:data.tutor_id||null
+      const student=tx(()=>{
+        if(tutor&&get('SELECT role FROM users WHERE id=?',tutor)?.role!=='tutor')fail(400,'Выберите репетитора')
+        const id=randomUUID()
+        run('INSERT INTO users(id,username,name,role,password,guest) VALUES(?,?,?,?,?,1)',id,'guest-'+id,name,'student',passwordHash(token()))
+        if(tutor)run('INSERT INTO tutor_students VALUES(?,?)',tutor,id)
+        return get('SELECT id,name,role,guest FROM users WHERE id=?',id)
+      })
+      return json(res,201,{student})
+    }
+    const accessMatch=path.match(/^\/api\/v1\/students\/([a-f0-9-]{36})\/access$/)
+    if(accessMatch&&['POST','DELETE'].includes(method)){
+      admin(account)
+      const student=get("SELECT id,guest FROM users WHERE id=? AND role='student'",accessMatch[1])
+      if(!student)fail(404,'Ученик не найден')
+      const {kind}=await body(req)
+      if(!['claim','share'].includes(kind))fail(400,'Некорректный вид доступа')
+      if(method==='DELETE'){run('DELETE FROM student_access WHERE student_id=? AND kind=?',student.id,kind);return json(res,200,{ok:true})}
+      if(kind==='claim'&&!student.guest)fail(409,'Аккаунт уже активирован')
+      const code=token(),expires=Date.now()+(kind==='claim'?7:30)*86400000
+      tx(()=>{run('DELETE FROM student_access WHERE student_id=? AND kind=?',student.id,kind);run('INSERT INTO student_access VALUES(?,?,?,?)',hash(code),student.id,kind,expires)})
+      return json(res,201,{code,expires:new Date(expires).toISOString()})
     }
     if(method==='POST'&&path==='/api/v1/assignments'){
       admin(account);const data=await body(req),tutor=clean(data.tutor_id),student=clean(data.student_id)

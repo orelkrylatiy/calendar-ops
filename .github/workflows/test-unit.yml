@@ -22,7 +22,7 @@ jobs:
       - name: Set up Node.js 🟩
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
       - name: Set Timezone 🌍🌎🌏
         uses: szenius/set-timezone@v2.0
         with:
@@ -44,7 +44,7 @@ jobs:
       - name: Set up Node.js 🟩
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
       - name: Set Timezone 🌍🌎🌏
         uses: szenius/set-timezone@v2.0
         with:
@@ -66,7 +66,7 @@ jobs:
       - name: Set up Node.js 🟩
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
       - name: Set Timezone 🌍🌎🌏
         uses: szenius/set-timezone@v2.0
         with:

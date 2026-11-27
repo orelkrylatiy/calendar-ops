@@ -1,0 +1,35 @@
+name: Dependency audit
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Audit locked dependencies
+        run: |
+          npm audit --json > audit.json || true
+          npm audit --omit=dev --json > audit-runtime.json || true
+          node -e "for(const f of ['audit.json','audit-runtime.json']){const a=require('./'+f);console.log(f,JSON.stringify(a.metadata?.vulnerabilities||a.error));if(!a.metadata)process.exitCode=1}"
+      - name: Test compatible lockfile fixes without applying them
+        run: |
+          cp package-lock.json /tmp/old-lock.json
+          npm audit fix --package-lock-only --ignore-scripts --no-fund --json > audit-fix.json || true
+          npm audit --json > audit-after.json || true
+          node -e "const a=require('./audit-after.json');console.log('After compatible fixes',JSON.stringify(a.metadata?.vulnerabilities||a.error));for(const [k,v] of Object.entries(a.vulnerabilities||{}))console.log(k,v.severity,JSON.stringify(v.fixAvailable));"
+          cp package-lock.json proposed-package-lock.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dependency-audit
+          path: |
+            audit*.json
+            proposed-package-lock.json

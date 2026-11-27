@@ -120,3 +120,33 @@ test('availability subtraction handles adjacent, overlapping and unrelated booki
   const busy=[{...slot,start:'2026-12-01T10:00:00.000Z',end:'2026-12-01T11:00:00.000Z'},{...slot,start:'2026-12-01T10:30:00.000Z',end:'2026-12-01T12:00:00.000Z'},{...slot,tutor_id:'b'}]
   assert.deepEqual(subtractBusy([slot],busy),[{...slot,end:'2026-12-01T10:00:00.000Z'},{...slot,start:'2026-12-01T12:00:00.000Z'}])
 })
+
+test('guest student, private schedule link and single-use account activation',async t=>{
+  const server=createApp({dbPath:':memory:',adminUser:'owner',adminPassword:'abcdef'})
+  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve))
+  t.after(()=>new Promise(resolve=>server.close(resolve)))
+  const origin='http://127.0.0.1:'+server.address().port
+  const req=async(path,method='GET',body,cookie='')=>{const res=await fetch(origin+'/api/v1/'+path,{method,headers:{Origin:origin,'Content-Type':'application/json','X-Calendar-Client':'1',Cookie:cookie},...(body?{body:JSON.stringify(body)}:{})});return {status:res.status,data:await res.json(),cookie:res.headers.get('set-cookie')?.split(';')[0]}}
+  assert.equal((await req('config')).data.minPassword,6)
+  const admin=await req('login','POST',{username:'owner',password:'abcdef'})
+  assert.equal(admin.status,200)
+  const invite=await req('invites','POST',{role:'tutor'},admin.cookie)
+  const tutor=await req('register','POST',{username:'teacher',name:'Teacher',password:'abcdef',code:invite.data.code})
+  const guest=await req('students','POST',{name:'Guest'},tutor.cookie)
+  assert.equal(guest.status,201)
+  const id=guest.data.student.id, path='students/'+id+'/access'
+  assert.equal((await req(path,'POST',{kind:'share'},tutor.cookie)).status,403)
+  const lesson=await req('lessons','POST',{title:'Math',student_id:id,start:'2026-12-01T10:00:00Z',payment_status:'paid'},tutor.cookie)
+  assert.equal(lesson.status,201)
+  const share=await req(path,'POST',{kind:'share'},admin.cookie)
+  const schedule=await req('shared-schedule','POST',{code:share.data.code})
+  assert.equal(schedule.data.lessons.length,1)
+  assert.equal(schedule.data.lessons[0].payment_status,undefined)
+  assert.equal((await req(path,'DELETE',{kind:'share'},admin.cookie)).status,200)
+  assert.equal((await req('shared-schedule','POST',{code:share.data.code})).status,404)
+  const claim=await req(path,'POST',{kind:'claim'},admin.cookie)
+  const activated=await req('register','POST',{username:'guest-real',password:'abcdef',code:claim.data.code})
+  assert.equal(activated.data.user.id,id)
+  assert.equal((await req('lessons','GET',undefined,activated.cookie)).data.lessons.length,1)
+  assert.equal((await req('register','POST',{username:'another',password:'abcdef',code:claim.data.code})).status,400)
+})
