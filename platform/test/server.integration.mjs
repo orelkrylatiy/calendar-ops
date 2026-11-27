@@ -1,6 +1,10 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { createApp } from '../server.mjs'
+import { DatabaseSync } from 'node:sqlite'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 test('role isolation, invite lifecycle, conflicts, audit-safe cancellation and logout',async t=>{
   const server=createApp({dbPath:':memory:',adminUser:'owner',adminPassword:'test-password-long'})
@@ -31,7 +35,15 @@ test('role isolation, invite lifecycle, conflicts, audit-safe cancellation and l
   const lesson=await request('lessons','POST',payload,admin.cookie)
   assert.equal(lesson.status,201)
   assert.equal((await request('lessons','POST',payload,admin.cookie)).status,409)
-  assert.equal((await request('lessons','POST',payload,tutor.cookie)).status,403)
+  assert.equal(lesson.data.lesson.status,'tentative')
+  assert.equal((await request('lessons','POST',payload,tutor.cookie)).status,409)
+  assert.equal((await request('lessons','POST',{...payload,student_id:other.data.user.id},tutor.cookie)).status,403)
+  assert.equal((await request('students','GET',undefined,tutor.cookie)).data.students.length,1)
+  assert.equal((await request('students','GET',undefined,student.cookie)).status,403)
+  const confirmed=await request('lessons/'+lesson.data.lesson.id,'PATCH',{status:'confirmed'},tutor.cookie)
+  assert.equal(confirmed.status,200)
+  assert.equal(confirmed.data.lesson.status,'confirmed')
+  assert.equal((await request('lessons/'+lesson.data.lesson.id,'PATCH',{status:'invalid'},admin.cookie)).status,400)
   assert.equal((await request('users','GET',undefined,student.cookie)).status,403)
   assert.equal((await request('lessons','GET',undefined,tutor.cookie)).data.lessons.length,1)
   assert.equal((await request('lessons','GET',undefined,student.cookie)).data.lessons.length,1)
@@ -39,6 +51,31 @@ test('role isolation, invite lifecycle, conflicts, audit-safe cancellation and l
   assert.equal((await request('lessons/'+lesson.data.lesson.id,'PATCH',{status:'cancelled'},other.cookie)).status,403)
   assert.equal((await request('lessons/'+lesson.data.lesson.id,'PATCH',{status:'cancelled'},admin.cookie)).status,200)
   assert.equal((await request('lessons','POST',payload,admin.cookie)).status,201)
+  assert.equal((await request('assignments','POST',{tutor_id:tutor.data.user.id,student_id:other.data.user.id},tutor.cookie)).status,403)
+  assert.equal((await request('assignments','POST',{tutor_id:tutor.data.user.id,student_id:other.data.user.id},admin.cookie)).status,201)
+  const next={...payload,student_id:other.data.user.id,start:'2026-12-01T11:00:00.000Z',end:'2026-12-01T12:00:00.000Z',status:'no_show'}
+  assert.equal((await request('lessons','POST',next,tutor.cookie)).status,201)
+  assert.equal((await request('students','GET',undefined,tutor.cookie)).data.students.length,2)
+  assert.equal((await request('lessons','GET',undefined,other.cookie)).data.lessons.length,1)
   assert.equal((await request('logout','POST',undefined,student.cookie)).status,200)
   assert.equal((await request('me','GET',undefined,student.cookie)).status,401)
+})
+
+test('legacy scheduled lessons migrate to confirmed, preserving IDs and tutor relationships',async t=>{
+  const dir=mkdtempSync(join(tmpdir(),'calendar-ops-'))
+  t.after(()=>rmSync(dir,{recursive:true,force:true}))
+  const dbPath=join(dir,'legacy.sqlite')
+  const db=new DatabaseSync(dbPath)
+  db.exec(`CREATE TABLE users(id TEXT PRIMARY KEY, username TEXT UNIQUE NOT NULL, name TEXT NOT NULL, role TEXT NOT NULL CHECK(role IN ('admin','tutor','student')), password TEXT NOT NULL);
+    INSERT INTO users VALUES('a','owner','Admin','admin','unused'),('t','tutor','Tutor','tutor','unused'),('s','student','Student','student','unused');
+    CREATE TABLE lessons(id TEXT PRIMARY KEY, title TEXT NOT NULL, tutor_id TEXT NOT NULL REFERENCES users(id), student_id TEXT NOT NULL REFERENCES users(id), start TEXT NOT NULL, end TEXT NOT NULL, status TEXT NOT NULL CHECK(status IN ('scheduled','completed','cancelled')), CHECK(start<end));
+    INSERT INTO lessons VALUES('old','Math','t','s','2026-12-01T10:00:00.000Z','2026-12-01T11:00:00.000Z','scheduled');`)
+  db.close()
+  const server=createApp({dbPath})
+  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve))
+  await new Promise(resolve=>server.close(resolve))
+  const migrated=new DatabaseSync(dbPath)
+  assert.equal(migrated.prepare("SELECT status FROM lessons WHERE id='old'").get().status,'confirmed')
+  assert.equal(migrated.prepare("SELECT student_id FROM tutor_students WHERE tutor_id='t'").get().student_id,'s')
+  migrated.close()
 })

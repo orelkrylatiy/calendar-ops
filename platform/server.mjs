@@ -63,7 +63,7 @@ export function createApp({dbPath=process.env.CALENDAR_DB || resolve(here,'data/
   CREATE TABLE IF NOT EXISTS users(id TEXT PRIMARY KEY, username TEXT UNIQUE NOT NULL, name TEXT NOT NULL, role TEXT NOT NULL CHECK(role IN ('admin','tutor','student')), password TEXT NOT NULL);
   CREATE TABLE IF NOT EXISTS sessions(hash TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id), expires INTEGER NOT NULL);
   CREATE TABLE IF NOT EXISTS invites(hash TEXT PRIMARY KEY, role TEXT NOT NULL CHECK(role IN ('tutor','student')), expires INTEGER NOT NULL, used INTEGER NOT NULL DEFAULT 0);
-  CREATE TABLE IF NOT EXISTS lessons(id TEXT PRIMARY KEY, title TEXT NOT NULL, tutor_id TEXT NOT NULL REFERENCES users(id), student_id TEXT NOT NULL REFERENCES users(id), start TEXT NOT NULL, end TEXT NOT NULL, status TEXT NOT NULL CHECK(status IN ('scheduled','completed','cancelled')), CHECK(start<end));
+  CREATE TABLE IF NOT EXISTS lessons(id TEXT PRIMARY KEY, title TEXT NOT NULL, tutor_id TEXT NOT NULL REFERENCES users(id), student_id TEXT NOT NULL REFERENCES users(id), start TEXT NOT NULL, end TEXT NOT NULL, status TEXT NOT NULL CHECK(status IN ('tentative','confirmed','completed','cancelled','no_show')), CHECK(start<end));
   CREATE INDEX IF NOT EXISTS lesson_tutor ON lessons(tutor_id,start,end);
   CREATE INDEX IF NOT EXISTS lesson_student ON lessons(student_id,start,end);
   CREATE TABLE IF NOT EXISTS audit(id INTEGER PRIMARY KEY, actor TEXT NOT NULL, action TEXT NOT NULL, lesson_id TEXT NOT NULL, before TEXT, after TEXT, created TEXT NOT NULL);
@@ -76,6 +76,19 @@ export function createApp({dbPath=process.env.CALENDAR_DB || resolve(here,'data/
     try {const value=fn();db.exec('COMMIT');return value}
     catch(e){db.exec('ROLLBACK');throw e}
   }
+  // Upgrade databases created by the original MVP without losing lesson IDs or audit history.
+  if (!get("SELECT sql FROM sqlite_master WHERE type='table' AND name='lessons'").sql.includes("'tentative'")) {
+    tx(()=>{
+      db.exec(`CREATE TABLE lessons_v2(id TEXT PRIMARY KEY, title TEXT NOT NULL, tutor_id TEXT NOT NULL REFERENCES users(id), student_id TEXT NOT NULL REFERENCES users(id), start TEXT NOT NULL, end TEXT NOT NULL, status TEXT NOT NULL CHECK(status IN ('tentative','confirmed','completed','cancelled','no_show')), CHECK(start<end));
+        INSERT INTO lessons_v2 SELECT id,title,tutor_id,student_id,start,end,CASE WHEN status='scheduled' THEN 'confirmed' ELSE status END FROM lessons;
+        DROP TABLE lessons;
+        ALTER TABLE lessons_v2 RENAME TO lessons;
+        CREATE INDEX lesson_tutor ON lessons(tutor_id,start,end);
+        CREATE INDEX lesson_student ON lessons(student_id,start,end);`)
+    })
+  }
+  db.exec(`CREATE TABLE IF NOT EXISTS tutor_students(tutor_id TEXT NOT NULL REFERENCES users(id), student_id TEXT NOT NULL REFERENCES users(id), PRIMARY KEY(tutor_id,student_id));
+    INSERT OR IGNORE INTO tutor_students SELECT DISTINCT tutor_id,student_id FROM lessons;`)
   if (!get("SELECT id FROM users WHERE role='admin' LIMIT 1")) {
     if (!adminUser || !adminPassword) {db.close();throw new Error('Set CALENDAR_ADMIN_USER and CALENDAR_ADMIN_PASSWORD (12+ characters) for first start')}
     run('INSERT INTO users VALUES(?,?,?,?,?)',randomUUID(),username(adminUser),'Администратор','admin',passwordHash(password(adminPassword)))
@@ -108,20 +121,22 @@ export function createApp({dbPath=process.env.CALENDAR_DB || resolve(here,'data/
   const dummyHash=passwordHash(token())
   const selectLessons='SELECT l.*, t.name AS tutor_name, s.name AS student_name FROM lessons l JOIN users t ON t.id=l.tutor_id JOIN users s ON s.id=l.student_id'
   function saveLesson(account,data,id) {
-    admin(account)
+    if(!['admin','tutor'].includes(account.role)) fail(403,'Недостаточно прав')
     return tx(()=>{
       const previous=id?get('SELECT * FROM lessons WHERE id=?',id):null
-      if(id&&!previous) fail(404,'Занятие не найдено')
+      if(id&&(!previous||(account.role==='tutor'&&previous.tutor_id!==account.id))) fail(404,'Занятие не найдено')
       const input={...previous,...data}
-      const title=clean(input.title), tutor=clean(input.tutor_id), student=clean(input.student_id)
-      const start=date(input.start), end=date(input.end), status=input.status||'scheduled'
+      const title=clean(input.title), tutor=clean(input.tutor_id ?? (account.role==='tutor'?account.id:undefined)), student=clean(input.student_id)
+      if(account.role==='tutor'&&(tutor!==account.id||!get('SELECT 1 FROM tutor_students WHERE tutor_id=? AND student_id=?',account.id,student))) fail(403,'Ученик не закреплён за вами')
+      const start=date(input.start), end=date(input.end), status=input.status ?? 'tentative'
       if(start>=end || Date.parse(end)-Date.parse(start)>86400000) fail(400,'Проверьте длительность')
-      if(!['scheduled','completed','cancelled'].includes(status)) fail(400,'Некорректный статус')
+      if(!['tentative','confirmed','completed','cancelled','no_show'].includes(status)) fail(400,'Некорректный статус')
       if(get('SELECT role FROM users WHERE id=?',tutor)?.role!=='tutor'||get('SELECT role FROM users WHERE id=?',student)?.role!=='student') fail(400,'Выберите преподавателя и ученика')
       if(status!=='cancelled'&&get("SELECT id FROM lessons WHERE status!='cancelled' AND id!=? AND (tutor_id=? OR student_id=?) AND start<? AND end>?",id||'',tutor,student,end,start)) fail(409,'В это время преподаватель или ученик уже занят')
       const lessonId=id||randomUUID()
       if(id) run('UPDATE lessons SET title=?,tutor_id=?,student_id=?,start=?,end=?,status=? WHERE id=?',title,tutor,student,start,end,status,id)
       else run('INSERT INTO lessons VALUES(?,?,?,?,?,?,?)',lessonId,title,tutor,student,start,end,status)
+      if(account.role==='admin') run('INSERT OR IGNORE INTO tutor_students VALUES(?,?)',tutor,student)
       const lesson=get('SELECT * FROM lessons WHERE id=?',lessonId)
       run('INSERT INTO audit(actor,action,lesson_id,before,after,created) VALUES(?,?,?,?,?,?)',account.id,id?'updated':'created',lessonId,previous?JSON.stringify(previous):null,JSON.stringify(lesson),new Date().toISOString())
       return lesson
@@ -176,6 +191,17 @@ export function createApp({dbPath=process.env.CALENDAR_DB || resolve(here,'data/
     if(method==='GET'&&path==='/api/v1/me') return json(res,200,{user:account})
     if(method==='GET'&&path==='/api/v1/users'){
       admin(account);return json(res,200,{users:all('SELECT id,username,name,role FROM users ORDER BY name')})
+    }
+    if(method==='GET'&&path==='/api/v1/students'){
+      if(account.role==='student') fail(403,'Недостаточно прав')
+      const students=account.role==='admin'?all("SELECT id,name,role FROM users WHERE role='student' ORDER BY name"):all("SELECT u.id,u.name,u.role FROM users u JOIN tutor_students ts ON u.id=ts.student_id WHERE ts.tutor_id=? ORDER BY u.name",account.id)
+      return json(res,200,{students})
+    }
+    if(method==='POST'&&path==='/api/v1/assignments'){
+      admin(account);const data=await body(req),tutor=clean(data.tutor_id),student=clean(data.student_id)
+      if(get('SELECT role FROM users WHERE id=?',tutor)?.role!=='tutor'||get('SELECT role FROM users WHERE id=?',student)?.role!=='student') fail(400,'Выберите преподавателя и ученика')
+      run('INSERT OR IGNORE INTO tutor_students VALUES(?,?)',tutor,student)
+      return json(res,201,{ok:true})
     }
     if(method==='POST'&&path==='/api/v1/invites'){
       admin(account);const {role}=await body(req)

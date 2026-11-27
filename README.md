@@ -6,8 +6,9 @@ A scheduling workspace for tutoring teams, based on the open-source [Schedule-X]
 
 ## Product
 
-- Administrator: invite tutors and students, view all lessons, filter by tutor, create, reschedule, complete or cancel lessons.
-- Tutor and student: sign in and view only their own lessons. Invitation codes are one-time, role-bound and expire after seven days.
+- Administrator: invite tutors and students, view all lessons, filter by tutor, student or status, assign students to tutors, create and reschedule lessons.
+- Tutor: manage lessons with assigned students; student: read-only access to their own lessons. Invitation codes are one-time, role-bound and expire after seven days.
+- Lesson statuses: tentative (dashed, reserves the slot), confirmed (blue), completed (green), cancelled (muted), no-show (amber). Old scheduled lessons migrate to confirmed.
 - Schedule-X day/week/month/list calendar and a chronological board; responsive Russian UI.
 - Optional offline read-only snapshot on a trusted device; no offline write synchronization.
 
@@ -55,7 +56,7 @@ Platform CI runs syntax checks, ESLint, HTTP integration tests, the production b
 
 ## API and deployment
 
-The JSON API is under `/api/v1/`: login, register, logout, me, users, invites, lessons. Authentication uses HttpOnly SameSite=Lax session cookies; write requests require matching Origin and `X-Calendar-Client: 1`.
+The JSON API is under `/api/v1/`: login, register, logout, me, users, students, assignments, invites, lessons. Authentication uses HttpOnly SameSite=Lax session cookies; write requests require matching Origin and `X-Calendar-Client: 1`.
 
 For deployment, configure HTTPS at a reverse proxy, `CALENDAR_ORIGIN` to the exact public origin, `CALENDAR_SECURE_COOKIE=1`, persistent storage at `CALENDAR_DB`, and strong owner credentials. Host binds to loopback by default; `HOST` and `PORT` override that. Back up the SQLite database consistently. No public registration, default accounts, or production deployment is enabled.
 
@@ -63,7 +64,7 @@ For deployment, configure HTTPS at a reverse proxy, `CALENDAR_ORIGIN` to the exa
 
 ## Roadmap / limits
 
-Single-school MVP, not yet multi-tenant SaaS. PostgreSQL migration, organization-scoped permissions, recurring lessons, tutor availability, notifications, OAuth/OIDC, external embed tokens and SDK, versioned offline write synchronization, invitation revocation, account recovery, expanded browser E2E and production hardening remain future work. The board is a chronological card view, not a freeform canvas.
+Single-school MVP, not yet multi-tenant SaaS. PostgreSQL migration, organization-scoped permissions, student unassignment, recurring lessons, tutor availability, notifications, OAuth/OIDC, external embed tokens and SDK, versioned offline write synchronization, invitation revocation, account recovery, expanded browser E2E and production hardening remain future work. The board is a chronological card view, not a freeform canvas.
 
 See [platform implementation notes](platform/ARCHITECTURE.md).
 
