@@ -88,6 +88,12 @@
   },
   "overrides": {
     "handlebars": ">=4.7.10 <5",
-    "brace-expansion@1": "^1.1.22"
+    "brace-expansion@1": "^1.1.22",
+    "@npmcli/arborist": {
+      "minimatch": "^11.0.9"
+    },
+    "npm-packlist": {
+      "glob": "^14.0.6"
+    }
   }
 }
