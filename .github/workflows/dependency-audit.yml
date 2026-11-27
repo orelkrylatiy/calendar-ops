@@ -27,6 +27,8 @@ jobs:
           npm audit --json > audit-after.json || true
           node -e "const a=require('./audit-after.json');console.log('After compatible fixes',JSON.stringify(a.metadata?.vulnerabilities||a.error));for(const [k,v] of Object.entries(a.vulnerabilities||{}))console.log(k,v.severity,JSON.stringify(v.fixAvailable));"
           cp package-lock.json proposed-package-lock.json
+          npm audit --omit=dev --json > audit-runtime-after.json || true
+          node -e "const a=require('./audit-runtime-after.json');console.log('Runtime after fixes',JSON.stringify(a.metadata?.vulnerabilities||a.error))"
       - uses: actions/upload-artifact@v4
         with:
           name: dependency-audit

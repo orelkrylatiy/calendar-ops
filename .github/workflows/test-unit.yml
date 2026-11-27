@@ -5,6 +5,8 @@ on:
       - 'packages/**'
       - 'package.json'
       - 'package-lock.json'
+      - 'website/app/setup/setup-analytics-contract.test.ts'
+      - '.github/workflows/test-unit.yml'
   push:
     branches:
       - main

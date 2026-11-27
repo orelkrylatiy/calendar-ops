@@ -24,7 +24,7 @@ const typeOf=l=>l.lesson_type==='trial'?'trial':'regular'
 const paymentOf=l=>l.payment_status==='paid'?'paid':'unpaid'
 const durationOf=l=>Math.round((Date.parse(l.end)-Date.parse(l.start))/60000)
 const canEdit=()=>!!account&&['admin','tutor'].includes(account.role)&&!offline&&!embed&&!shared
-const resetFilters=()=>{selectedTutor='';selectedStudent='';selectedStatus='';selectedPayment='';selectedType='';selectedDate=null;availabilityMode=false;calendarView=null}
+const resetFilters=()=>{selectedTutor='';selectedStudent='';selectedStatus='';selectedPayment='';selectedType='';selectedDate=null;availabilityMode=false;availabilityOpen=false;filtersOpen=false;calendarView=null}
 const CACHE='calendar-ops-snapshot-v1'
 let account=null, lessons=[], users=[], calendar=null, offline=false, view='calendar', selectedTutor='', selectedStudent='', selectedStatus='', selectedPayment='', selectedType='', slots=[], freeSlots=[], availabilityMode=false, selectedDate=null, calendarView=null, controls=null, authMode='login'
 const el=(tag,attrs={},...children)=>{
@@ -72,7 +72,7 @@ function loginPage(){
   form.append(field('Логин',input('username','text',{autocomplete:'username'})),field('Пароль',input('password','password',{minlength:String(minPassword),autocomplete:registration?'new-password':'current-password'})))
   if(registration)form.prepend(field('Имя',input('name')),field('Пригласительный код',input('code','text',{value:new URLSearchParams(location.hash.slice(1)).get('invite')||''})))
   form.append(el('button',{class:'primary',type:'submit'},registration?'Создать аккаунт':'Войти'))
-  form.addEventListener('submit',async e=>{e.preventDefault();try{const data=Object.fromEntries(new FormData(form));await api(registration?'register':'login','POST',data);dropCache();dispose();view='calendar';resetFilters();await refresh()}catch(error){notice(error.message)}})
+  form.addEventListener('submit',async e=>{e.preventDefault();try{const data=Object.fromEntries(new FormData(form));await api(registration?'register':'login','POST',data);if(location.hash)history.replaceState(null,'',location.pathname+location.search);dropCache();dispose();view='calendar';resetFilters();await refresh()}catch(error){notice(error.message)}})
   root.append(el('main',{class:'login compact-login'},el('section',{class:'auth'},el('div',{class:'auth-inner'},brand(),themeButton(),el('h2',{},registration?'Присоединиться':'Войти в календарь'),el('p',{class:'muted'},registration?'Введите код и придумайте пароль.':'Расписание занятий и свободное время.'),form,button(registration?'Уже есть аккаунт':'У меня есть код',()=>{authMode=registration?'login':'register';loginPage()},'link'),el('p',{id:'notice',role:'status',class:'notice'})))))
 }
 const fmt=new Intl.DateTimeFormat('ru-RU',{dateStyle:'medium',timeStyle:'short'})
@@ -104,7 +104,8 @@ function assignmentDialog(){
 }
 function lessonDialog(lesson,slot,slotEnd,exact=false){
   if(!canEdit()){if(lesson)lessonDetails(lesson);return}
-  if(!tutorOptions().length||!studentOptions().length){notice(account.role==='tutor'?'Администратор должен закрепить за вами ученика.':'Сначала пригласите преподавателя и ученика.');return}
+  if(!tutorOptions().length){notice('Сначала добавьте репетитора в разделе «Участники».');return}
+  if(!studentOptions().length){studentDialog();return}
   const dialog=el('dialog',{class:'dialog'})
   const next=slot!=null?new Date(slot):new Date(Math.ceil((Date.now()+3600000)/1800000)*1800000)
   const start=lesson?.start||next.toISOString(),end=lesson?.end||new Date(exact&&slotEnd?Date.parse(slotEnd):Math.min(next.getTime()+3600000,slotEnd?Date.parse(slotEnd):Infinity)).toISOString()
@@ -197,7 +198,7 @@ function board(host){
 }
 function render(){
   dispose();root.replaceChildren()
-  const admin=account.role==='admin'&&!offline&&!embed
+  const admin=account.role==='admin'&&!offline&&!embed&&!shared
   const sidebar=el('aside',{class:'sidebar'},brand(),el('div',{class:'workspace'},el('span',{class:'avatar'},account.name.slice(0,1).toUpperCase()),el('div',{},el('strong',{},account.name),el('small',{},roles[account.role]))),el('nav',{},button('▦  Календарь',()=>{view='calendar';render()},view==='calendar'?'active':'nav'),button('▤  Доска',()=>{view='board';render()},view==='board'?'active':'nav'),!shared&&!embed?button('◫  Статистика',()=>{view='stats';render()},view==='stats'?'active':'nav'):null,button('?  Помощь',()=>{view='help';render()},view==='help'?'active':'nav'),(admin||canAvailability())?button('♧  Участники',()=>{view='users';render()},view==='users'?'active':'nav'):null),el('div',{class:'sidebar-bottom'},themeButton(),el('span',{class:'muted'},offline?'● Офлайн':'● Подключено'),button(offline?'Закрыть офлайн':'Выйти',async()=>{dropCache();if(!offline)try{await api('logout','POST')}catch(error){notice(error.message);return}account=null;lessons=[];users=[];slots=[];freeSlots=[];offline=false;dispose();view='calendar';resetFilters();loginPage()},'nav')))
   const toolbar=el('div',{class:'toolbar'},el('div',{class:'workspace-title'},el('h1',{},view==='users'?'Участники':view==='board'?'Доска занятий':view==='stats'?'Статистика':view==='help'?'Помощь':'Расписание'),clock()),el('div',{class:'actions'},!embed&&!shared?button(fullscreen?'↙ В рабочее пространство':'↗ На весь экран',()=>{location.href=fullscreen?'/':'/calendar'}):null,(fullscreen||shared||embed)?themeButton():null,(admin||canAvailability())&&view==='users'?button('+ Ученик',studentDialog,'primary'):null,admin&&view==='users'?button('Пригласить',inviteDialog):null,admin&&view==='users'?button('Закрепить ученика',assignmentDialog):null,canEdit()&&view!=='users'?button('+ Занятие',()=>lessonDialog(),'primary'):null))
   const main=el('main',{class:'workspace-main'},toolbar,el('div',{id:'notice',role:'status',class:'notice'},offline?'Офлайн-копия. Изменения недоступны.':'')) 
@@ -212,7 +213,8 @@ function render(){
     const type=select('type_filter',[['','Все типы'],...Object.entries(lessonTypes)],selectedType);type.addEventListener('change',()=>{selectedType=type.value;render()});filters.append(field('Тип',type))
     const payment=select('payment_filter',[['','Вся оплата'],...Object.entries(paymentStatuses)],selectedPayment);payment.addEventListener('change',()=>{selectedPayment=payment.value;render()});if(!shared)filters.append(field('Оплата',payment))
     if(selectedTutor||selectedStudent||selectedStatus||selectedPayment||selectedType)filters.append(button('Сбросить',()=>{selectedTutor='';selectedStudent='';selectedStatus='';selectedPayment='';selectedType='';render()},'secondary'))
-    const controlsBar=el('div',{class:'calendar-tools'},button(filtersOpen?'Скрыть фильтры':'Фильтры',()=>{filtersOpen=!filtersOpen;render()},'secondary'),!shared&&!embed&&(admin||canAvailability())?button(availabilityOpen?'Скрыть доступность':'Доступность'+(canAvailability()&&!slots.length?' · !':''),()=>{availabilityOpen=!availabilityOpen;availabilityMode=false;render()},availabilityOpen?'primary':'secondary'):null)
+    const controlsBar=el('div',{class:'calendar-tools'},button(filtersOpen?'Скрыть фильтры':'Фильтры',()=>{filtersOpen=!filtersOpen;render()},'secondary'),!shared&&!embed&&(admin||canAvailability())?button(availabilityOpen?'Скрыть доступность':'Доступность'+(canAvailability()&&!slots.some(s=>Date.parse(s.end)>Date.now())?' · !':''),()=>{availabilityOpen=!availabilityOpen;availabilityMode=false;render()},availabilityOpen?'primary':'secondary'):null)
+    if(canAvailability()&&!slots.some(s=>Date.parse(s.end)>Date.now())&&!availabilityOpen)controlsBar.append(el('span',{class:'availability-alert',role:'status'},'Нет будущих интервалов'))
     host.append(controlsBar);if(filtersOpen||view==='board')host.append(filters);else if(admin){const quick=select('quick_tutor',[['','Все репетиторы'],...tutorOptions()],selectedTutor);quick.setAttribute('aria-label','Репетитор');quick.addEventListener('change',()=>{selectedTutor=quick.value;render()});controlsBar.prepend(quick)}
     if(!shared&&(filtersOpen||view==='board'))host.append(el('div',{class:'calendar-legend'},...Object.keys(statuses).map(statusBadge),el('span',{class:'type-badge type-trial'},'Пробное'),el('span',{class:'payment-badge payment-paid'},'✓ Оплачено'),el('span',{class:'payment-badge payment-unpaid'},'○ Не оплачено')))
   }
@@ -233,8 +235,8 @@ function render(){
   const calendars=Object.fromEntries(Object.entries(statusColors).map(([key,[main,container,onContainer]])=>[key,{colorName:key,lightColors:{main,container,onContainer},darkColors:{main,container:'#263142',onContainer:'#f0f3f8'}}]))
   calendar=createCalendar({locale:'ru-RU',timezone:zone,firstDayOfWeek:1,views:[createViewDay(),createViewWeek(),createViewMonthGrid(),createViewList()],defaultView:calendarView||(matchMedia('(max-width: 700px)').matches?'day':'week'),...(selectedDate?{selectedDate}:{}),plugins:[controls,createCurrentTimePlugin()],calendars,isDark:theme==='dark',weekOptions:{gridStep:30,gridHeight:1000},
     backgroundEvents:showAvailability()?freeSlots.filter(s=>account.role==='tutor'||s.tutor_id===selectedTutor).map(s=>({start:Temporal.Instant.from(s.start).toZonedDateTimeISO(zone),end:Temporal.Instant.from(s.end).toZonedDateTimeISO(zone),style:{backgroundColor:theme==='dark'?'#153b2a':'#dcfce7',border:'1px dashed '+(theme==='dark'?'#32794f':'#86efac'),pointerEvents:'none'},title:'Свободное время'})):[],
-    events:visible().map(l=>({id:l.id,title:(shared?'':paymentOf(l)==='paid'?'✓ ':'○ ')+(typeOf(l)==='trial'?'Пробное · ':'')+l.title+' · '+(account.role==='student'?l.tutor_name:l.student_name),calendarId:statusOf(l),_options:{additionalClasses:['lesson-event','status-'+statusOf(l),'type-'+typeOf(l),'payment-'+paymentOf(l)]},start:Temporal.Instant.from(l.start).toZonedDateTimeISO(zone),end:Temporal.Instant.from(l.end).toZonedDateTimeISO(zone),description:statuses[statusOf(l)]+' · '+lessonTypes[typeOf(l)]+' · '+paymentStatuses[paymentOf(l)]+' · '+l.tutor_name+' · '+l.student_name})),
-    callbacks:{onEventClick(event){const lesson=lessons.find(l=>l.id===event.id);if(lesson)lessonDialog(lesson)},onClickDate(date){if(canEdit()){const at=Number(date.toZonedDateTime({timeZone:zone,plainTime:'09:00'}).epochMilliseconds);availabilityMode?slotDialog(null,at):lessonDialog(null,at)}},onClickDateTime(dateTime){if(Date.now()<suppressClickUntil)return;const at=Number(dateTime.epochMilliseconds);if(availabilityMode&&canAvailability())slotDialog(null,at);else if(canEdit()){const free=showAvailability()?freeSlots.find(s=>(account.role==='tutor'||s.tutor_id===selectedTutor)&&Date.parse(s.start)<=at&&Date.parse(s.end)>at):null;lessonDialog(null,at,free?.end)}}}})
+    events:visible().map(l=>({id:l.id,title:(shared?'':paymentOf(l)==='paid'?'✓ ':'○ ')+(typeOf(l)==='trial'?'Пробное · ':'')+l.title+' · '+(account.role==='student'?l.tutor_name:l.student_name),calendarId:statusOf(l),_options:{additionalClasses:['lesson-event','status-'+statusOf(l),'type-'+typeOf(l),'payment-'+paymentOf(l)]},start:Temporal.Instant.from(l.start).toZonedDateTimeISO(zone),end:Temporal.Instant.from(l.end).toZonedDateTimeISO(zone),description:[statuses[statusOf(l)],lessonTypes[typeOf(l)],shared?'':paymentStatuses[paymentOf(l)],l.tutor_name,l.student_name].filter(Boolean).join(' · ')})),
+    callbacks:{onEventClick(event){const lesson=lessons.find(l=>l.id===event.id);if(lesson)lessonDialog(lesson)},onClickDate(date){if(canEdit()){const at=Number(date.toPlainDateTime({hour:9}).toZonedDateTime(zone).epochMilliseconds);availabilityMode?slotDialog(null,at):lessonDialog(null,at)}},onClickDateTime(dateTime){if(Date.now()<suppressClickUntil)return;const at=Number(dateTime.epochMilliseconds);if(availabilityMode&&canAvailability())slotDialog(null,at);else if(canEdit()){const free=showAvailability()?freeSlots.find(s=>(account.role==='tutor'||s.tutor_id===selectedTutor)&&Date.parse(s.start)<=at&&Date.parse(s.end)>at):null;lessonDialog(null,at,free?.end)}}}})
   calendar.render(mount)
   installGridInteractions(mount,zone)
 }
@@ -247,7 +249,7 @@ function installGridInteractions(mount,zone){
     if(!canEdit()||e.button!==0||e.pointerType==='touch'||e.target.closest('.sx__event'))return
     const day=e.target.closest('[data-time-grid-date]');if(!day)return
     drag={day,start:getTime(day,e.clientY),y:e.clientY}
-    day.setPointerCapture(e.pointerId)
+    try{day.setPointerCapture(e.pointerId)}catch{}
   })
   mount.addEventListener('pointermove',e=>{
     if(!drag||Math.abs(e.clientY-drag.y)<6&&!preview)return
@@ -264,6 +266,7 @@ function installGridInteractions(mount,zone){
     else if(d.day.hasPointerCapture(e.pointerId))d.day.releasePointerCapture(e.pointerId)
   })
   mount.addEventListener('pointercancel',cleanup)
+  mount.addEventListener('lostpointercapture',cleanup)
   mount.addEventListener('contextmenu',e=>{if(!canEdit()||e.target.closest('.sx__event'))return;const day=e.target.closest('[data-time-grid-date]');if(day){e.preventDefault();create(getTime(day,e.clientY))}})
   mount.addEventListener('pointerover',e=>{const event=e.target.closest('[data-event-id]');if(!event)return;const l=lessons.find(x=>x.id===event.dataset.eventId);if(l)event.title=[l.title,l.student_name,l.tutor_name,statuses[statusOf(l)],shared?'':paymentStatuses[paymentOf(l)],timeFmt.format(new Date(l.start))+'–'+timeFmt.format(new Date(l.end))].filter(Boolean).join(' · ')})
 }
@@ -277,7 +280,7 @@ async function refresh(){
     offline=false;snapshot();render()
   }catch(error){
     if(error.status===401){dropCache();account=null;lessons=[];users=[];slots=[];freeSlots=[];dispose();resetFilters();view='calendar';loginPage();return}
-    if(!error.status&&!embed){try{const saved=optedIn()&&JSON.parse(localStorage.getItem(CACHE));if(saved?.account){account=saved.account;lessons=saved.lessons;users=[];offline=true;view='board';render();notice('Офлайн-копия от '+fmt.format(new Date(saved.saved))+' · Только чтение');return}}catch{}}
+    if(!error.status&&!embed&&!shared){try{const saved=optedIn()&&JSON.parse(localStorage.getItem(CACHE));if(saved?.account){account=saved.account;lessons=saved.lessons;users=[];offline=true;view='board';render();notice('Офлайн-копия от '+fmt.format(new Date(saved.saved))+' · Только чтение');return}}catch{}}
     if(shared){root.replaceChildren(el('main',{class:'auth'},el('p',{role:'alert'},error.message)));return}
     loginPage();notice(error.message)
   }
