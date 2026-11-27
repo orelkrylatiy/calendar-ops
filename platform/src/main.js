@@ -47,9 +47,10 @@ const select=(name,options,value='')=>{
 let noticeTimer
 function notice(message){const node=document.querySelector('#notice');if(node){node.textContent=message;node.classList.toggle('toast',!!account);clearTimeout(noticeTimer);if(account&&message)noticeTimer=setTimeout(()=>{node.textContent='';node.classList.remove('toast')},6500)}}
 function openDialog(dialog){
+  const isOutside=e=>{const r=dialog.getBoundingClientRect();return e.target===dialog&&(e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom)}
   let outside=false
-  dialog.addEventListener('pointerdown',e=>{const r=dialog.getBoundingClientRect();outside=e.target===dialog&&(e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom)})
-  dialog.addEventListener('click',e=>{if(outside&&e.target===dialog)dialog.close();outside=false})
+  dialog.addEventListener('pointerdown',e=>{outside=isOutside(e)})
+  dialog.addEventListener('click',e=>{if(outside&&isOutside(e))dialog.close();outside=false})
   document.body.append(dialog);dialog.addEventListener('close',()=>dialog.remove());dialog.showModal()
 }
 const clock=()=>el('span',{class:'live-clock','aria-label':'Текущее время'},new Date().toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit',second:'2-digit'}))
@@ -180,7 +181,7 @@ function accessDialog(student){
   openDialog(dialog)
 }
 function helpPanel(host){
-  host.append(el('section',{class:'help-panel'},el('h2',{},'Как пользоваться календарём'),el('p',{},'Нажмите свободную ячейку или выделите мышью интервал. Правый клик на свободном времени также открывает создание. Нажмите занятие для подробностей.'),el('h3',{},'Репетитор'),el('p',{},'Кнопка «Доступность» открывает интервалы. Включите режим отметки, выделите время, сохраните. Занятые уроками часы автоматически исключаются.'),el('h3',{},'Ученики и оплата'),el('p',{},'Создайте ученика без регистрации, выберите его в занятии, отметьте договорённость и оплату. Администратор выдаёт личную ссылку или приглашение.'),el('h3',{},'Горячие клавиши'),el('p',{},'N — новое занятие, A — доступность, Esc — закрыть диалог. Тема сохраняется на устройстве.')))
+  host.append(el('section',{class:'help-panel'},el('h2',{},'Как пользоваться календарём'),el('p',{},'Нажмите свободную ячейку или выделите мышью интервал. Правый клик на свободном времени также открывает создание. Нажмите занятие для подробностей. Потяните нижний край события мышью, чтобы изменить окончание.'),el('h3',{},'Репетитор'),el('p',{},'Кнопка «Доступность» открывает интервалы. Включите режим отметки, выделите время, сохраните. Занятые уроками часы автоматически исключаются.'),el('h3',{},'Ученики и оплата'),el('p',{},'Создайте ученика без регистрации, выберите его в занятии, отметьте договорённость и оплату. Администратор выдаёт личную ссылку или приглашение.'),el('h3',{},'Горячие клавиши'),el('p',{},'N — новое занятие, A — доступность, Esc — закрыть диалог. Тема сохраняется на устройстве.')))
 }
 function inviteDialog(){
   const dialog=el('dialog',{class:'dialog'})
@@ -236,7 +237,7 @@ function render(){
   calendar=createCalendar({locale:'ru-RU',timezone:zone,firstDayOfWeek:1,views:[createViewDay(),createViewWeek(),createViewMonthGrid(),createViewList()],defaultView:calendarView||(matchMedia('(max-width: 700px)').matches?'day':'week'),...(selectedDate?{selectedDate}:{}),plugins:[controls,createCurrentTimePlugin()],calendars,isDark:theme==='dark',weekOptions:{gridStep:30,gridHeight:1000},
     backgroundEvents:showAvailability()?freeSlots.filter(s=>account.role==='tutor'||s.tutor_id===selectedTutor).map(s=>({start:Temporal.Instant.from(s.start).toZonedDateTimeISO(zone),end:Temporal.Instant.from(s.end).toZonedDateTimeISO(zone),style:{backgroundColor:theme==='dark'?'#153b2a':'#dcfce7',border:'1px dashed '+(theme==='dark'?'#32794f':'#86efac'),pointerEvents:'none'},title:'Свободное время'})):[],
     events:visible().map(l=>({id:l.id,title:(shared?'':paymentOf(l)==='paid'?'✓ ':'○ ')+(typeOf(l)==='trial'?'Пробное · ':'')+l.title+' · '+(account.role==='student'?l.tutor_name:l.student_name),calendarId:statusOf(l),_options:{additionalClasses:['lesson-event','status-'+statusOf(l),'type-'+typeOf(l),'payment-'+paymentOf(l)]},start:Temporal.Instant.from(l.start).toZonedDateTimeISO(zone),end:Temporal.Instant.from(l.end).toZonedDateTimeISO(zone),description:[statuses[statusOf(l)],lessonTypes[typeOf(l)],shared?'':paymentStatuses[paymentOf(l)],l.tutor_name,l.student_name].filter(Boolean).join(' · ')})),
-    callbacks:{onEventClick(event){const lesson=lessons.find(l=>l.id===event.id);if(lesson)lessonDialog(lesson)},onClickDate(date){if(canEdit()){const at=Number(date.toPlainDateTime({hour:9}).toZonedDateTime(zone).epochMilliseconds);availabilityMode?slotDialog(null,at):lessonDialog(null,at)}},onClickDateTime(dateTime){if(Date.now()<suppressClickUntil)return;const at=Number(dateTime.epochMilliseconds);if(availabilityMode&&canAvailability())slotDialog(null,at);else if(canEdit()){const free=showAvailability()?freeSlots.find(s=>(account.role==='tutor'||s.tutor_id===selectedTutor)&&Date.parse(s.start)<=at&&Date.parse(s.end)>at):null;lessonDialog(null,at,free?.end)}}}})
+    callbacks:{onEventClick(event){if(Date.now()<suppressClickUntil)return;const lesson=lessons.find(l=>l.id===event.id);if(lesson)lessonDialog(lesson)},onClickDate(date){if(canEdit()){const at=Number(date.toPlainDateTime({hour:9}).toZonedDateTime(zone).epochMilliseconds);availabilityMode?slotDialog(null,at):lessonDialog(null,at)}},onClickDateTime(dateTime){if(Date.now()<suppressClickUntil)return;const at=Number(dateTime.epochMilliseconds);if(availabilityMode&&canAvailability())slotDialog(null,at);else if(canEdit()){const free=showAvailability()?freeSlots.find(s=>(account.role==='tutor'||s.tutor_id===selectedTutor)&&Date.parse(s.start)<=at&&Date.parse(s.end)>at):null;lessonDialog(null,at,free?.end)}}}})
   calendar.render(mount)
   installGridInteractions(mount,zone)
 }
@@ -246,9 +247,11 @@ function installGridInteractions(mount,zone){
   const create=(start,end)=>{if(availabilityMode&&canAvailability())slotDialog(null,start,end);else if(canEdit())lessonDialog(null,start,end?new Date(end).toISOString():undefined,!!end)}
   const cleanup=()=>{preview?.remove();preview=null;drag=null}
   mount.addEventListener('pointerdown',e=>{
-    if(!canEdit()||e.button!==0||e.pointerType==='touch'||e.target.closest('.sx__event'))return
+    if(!canEdit()||e.button!==0||e.pointerType==='touch')return
     const day=e.target.closest('[data-time-grid-date]');if(!day)return
-    drag={day,start:getTime(day,e.clientY),y:e.clientY}
+    const event=e.target.closest('.sx__event')
+    if(event){const rect=event.getBoundingClientRect(),lesson=lessons.find(l=>l.id===event.dataset.eventId);if(!lesson||!event.classList.contains('sx__time-grid-event')||e.clientY<rect.bottom-8||rect.height<20)return;drag={day,start:Date.parse(lesson.start),y:e.clientY,resize:lesson};e.preventDefault()}
+    else drag={day,start:getTime(day,e.clientY),y:e.clientY}
     try{day.setPointerCapture(e.pointerId)}catch{}
   })
   mount.addEventListener('pointermove',e=>{
@@ -262,7 +265,7 @@ function installGridInteractions(mount,zone){
   mount.addEventListener('pointerup',e=>{
     if(!drag)return
     const d=drag,wasDrag=!!preview;cleanup()
-    if(wasDrag){suppressClickUntil=Date.now()+400;const start=Math.min(d.start,d.end),end=Math.max(d.start,d.end)+1800000;create(start,end)}
+    if(wasDrag){suppressClickUntil=Date.now()+400;const start=Math.min(d.start,d.end),end=Math.max(d.start,d.end)+1800000;if(d.resize){const newEnd=d.end+1800000;if(newEnd>d.start)api('lessons/'+d.resize.id,'PATCH',{end:new Date(newEnd).toISOString()}).then(refresh).catch(e=>notice(e.message));else notice('Окончание должно быть позже начала')}else create(start,end)}
     else if(d.day.hasPointerCapture(e.pointerId))d.day.releasePointerCapture(e.pointerId)
   })
   mount.addEventListener('pointercancel',cleanup)

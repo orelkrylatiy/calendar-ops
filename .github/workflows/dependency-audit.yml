@@ -19,6 +19,7 @@ jobs:
         run: |
           npm audit --json > audit.json || true
           npm audit --omit=dev --json > audit-runtime.json || true
+          if test -f website/package-lock.json; then npm audit --prefix website --json > audit-website.json || true; fi
           node -e "for(const f of ['audit.json','audit-runtime.json']){const a=require('./'+f);console.log(f,JSON.stringify(a.metadata?.vulnerabilities||a.error));if(!a.metadata)process.exitCode=1}"
       - name: Test compatible lockfile fixes without applying them
         run: |

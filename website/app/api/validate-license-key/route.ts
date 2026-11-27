@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from 'next/server';
-import clientPromise from '../../../lib/mongodb/mongodb';
 import {
   lemonSqueezySetup, validateLicense,
 } from "@lemonsqueezy/lemonsqueezy.js";
@@ -22,6 +21,10 @@ const LICENSE_KEY_COLLECTION_NAME = "license_keys";
 
 export async function POST(request: NextRequest) {
   try {
+    if (!process.env.MONGODB_URI || !lemonSqueezyApiKey || !gitlabToken) {
+      return NextResponse.json({ message: 'License service is not configured', status: 503 }, { status: 503 });
+    }
+    const { default: clientPromise } = await import('../../../lib/mongodb/mongodb');
     const client = await clientPromise;
     const db = client.db(process.env.MONGO_DB_NAME);
     const parsedBody = await request.json();
