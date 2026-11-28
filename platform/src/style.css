@@ -107,3 +107,5 @@ input:not([type=checkbox]),select{background:var(--surface);color:var(--ink);bor
 .sx__calendar,.sx__view-container,.sx__week-wrapper{min-width:0;max-width:100%}.sx__view-container{overflow-x:hidden}.availability-alert{color:var(--muted);font-size:11px;line-height:1.3}.sidebar .workspace strong{max-width:105px}.sx__calendar-header-content{min-width:0;max-width:100%}
 
 .sx__time-grid-event.lesson-event::after{content:'';position:absolute;bottom:1px;left:35%;right:35%;height:4px;border-radius:4px;background:currentColor;opacity:.35;pointer-events:none}
+
+.zoom-control{display:flex!important;align-items:center;gap:8px;flex-wrap:wrap;font-size:12px}.zoom-control input[type=range]{width:105px;padding:0;accent-color:currentColor}.people article{flex-wrap:wrap}.people article small{overflow-wrap:anywhere}

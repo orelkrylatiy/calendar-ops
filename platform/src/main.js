@@ -10,6 +10,8 @@ const embed=location.pathname==='/embed'
 const shared=location.pathname==='/schedule'
 const fullscreen=location.pathname==='/calendar'
 let theme=localStorage.getItem('calendar-ops-theme')||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light')
+let gridHeight=Number(localStorage.getItem('calendar-ops-grid-height'))||1000
+gridHeight=Math.max(600,Math.min(2200,gridHeight))
 let minPassword=6, availabilityOpen=false, filtersOpen=false, suppressClickUntil=0
 const applyTheme=()=>{document.documentElement.dataset.theme=theme}
 applyTheme()
@@ -19,13 +21,16 @@ const statuses={tentative:'Предварительно',confirmed:'Подтве
 const statusColors={tentative:['#64748b','#f8fafc','#334155'],confirmed:['#2563eb','#dbeafe','#1e3a8a'],completed:['#15803d','#dcfce7','#14532d'],cancelled:['#64748b','#f1f5f9','#475569'],no_show:['#b45309','#fef3c7','#78350f']}
 const statusOf=l=>l.status==='scheduled'?'confirmed':l.status
 const lessonTypes={regular:'Обычное',trial:'Пробное'}
+const subjects={unspecified:'Не указан',slovak:'Словацкий язык',italian:'Итальянский язык',german:'Немецкий язык',english:'Английский язык',spanish:'Испанский язык'}
+const subjectLabel=value=>subjects[value]||subjects.unspecified
 const paymentStatuses={unpaid:'Не оплачено',paid:'Оплачено'}
 const typeOf=l=>l.lesson_type==='trial'?'trial':'regular'
 const paymentOf=l=>l.payment_status==='paid'?'paid':'unpaid'
 const durationOf=l=>Math.round((Date.parse(l.end)-Date.parse(l.start))/60000)
 const canEdit=()=>!!account&&['admin','tutor'].includes(account.role)&&!offline&&!embed&&!shared
-const resetFilters=()=>{selectedTutor='';selectedStudent='';selectedStatus='';selectedPayment='';selectedType='';selectedDate=null;availabilityMode=false;availabilityOpen=false;filtersOpen=false;calendarView=null}
+const resetFilters=()=>{selectedTutor='';selectedStudent='';selectedStatus='';selectedPayment='';selectedType='';selectedDate=null;availabilityMode=false;availabilityOpen=false;filtersOpen=false;calendarView=null;availabilityPrompted=false}
 const CACHE='calendar-ops-snapshot-v1'
+let availabilityPrompted=false
 let account=null, lessons=[], users=[], calendar=null, offline=false, view='calendar', selectedTutor='', selectedStudent='', selectedStatus='', selectedPayment='', selectedType='', slots=[], freeSlots=[], availabilityMode=false, selectedDate=null, calendarView=null, controls=null, authMode='login'
 const el=(tag,attrs={},...children)=>{
   const node=document.createElement(tag)
@@ -50,11 +55,13 @@ function openDialog(dialog){
   const isOutside=e=>{const r=dialog.getBoundingClientRect();return e.target===dialog&&(e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom)}
   let outside=false
   dialog.addEventListener('pointerdown',e=>{outside=isOutside(e)})
-  dialog.addEventListener('click',e=>{if(outside&&isOutside(e))dialog.close();outside=false})
+  dialog.addEventListener('click',e=>{if(outside&&isOutside(e)&&!dialog.hasAttribute('data-required'))dialog.close();outside=false})
   document.body.append(dialog);dialog.addEventListener('close',()=>dialog.remove());dialog.showModal()
 }
-const clock=()=>el('span',{class:'live-clock','aria-label':'Текущее время'},new Date().toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit',second:'2-digit'}))
-setInterval(()=>{document.querySelectorAll('.live-clock').forEach(n=>{n.textContent=new Date().toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit',second:'2-digit'})})},1000)
+const utcOffset=value=>{const minutes=-new Date(value).getTimezoneOffset(), absolute=Math.abs(minutes);return 'UTC'+(minutes<0?'−':'+')+Math.floor(absolute/60)+(absolute%60?':'+String(absolute%60).padStart(2,'0'):'')}
+const clockText=()=>{const now=new Date();return now.toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit',second:'2-digit'})+' ('+utcOffset(now)+')'}
+const clock=()=>el('span',{class:'live-clock','aria-label':'Текущее время'},clockText())
+setInterval(()=>{document.querySelectorAll('.live-clock').forEach(n=>{n.textContent=clockText()})},1000)
 async function api(path,method='GET',data){
   const res=await fetch('/api/v1/'+path,{method,headers:{'Content-Type':'application/json','X-Calendar-Client':'1'},credentials:'same-origin',...(data?{body:JSON.stringify(data)}:{})})
   const result=await res.json()
@@ -71,14 +78,16 @@ function loginPage(){
   const form=el('form',{class:'form'})
   const registration=authMode==='register'
   form.append(field('Логин',input('username','text',{autocomplete:'username'})),field('Пароль',input('password','password',{minlength:String(minPassword),autocomplete:registration?'new-password':'current-password'})))
-  if(registration)form.prepend(field('Имя',input('name')),field('Пригласительный код',input('code','text',{value:new URLSearchParams(location.hash.slice(1)).get('invite')||''})))
+  if(registration)form.prepend(field('Имя',input('name')),field('Пригласительный код',input('code','text',{minlength:'6',autocomplete:'one-time-code',value:new URLSearchParams(location.hash.slice(1)).get('invite')||''})))
   form.append(el('button',{class:'primary',type:'submit'},registration?'Создать аккаунт':'Войти'))
-  form.addEventListener('submit',async e=>{e.preventDefault();try{const data=Object.fromEntries(new FormData(form));await api(registration?'register':'login','POST',data);if(location.hash)history.replaceState(null,'',location.pathname+location.search);dropCache();dispose();view='calendar';resetFilters();await refresh()}catch(error){notice(error.message)}})
+  form.addEventListener('submit',async e=>{e.preventDefault();const submit=form.querySelector('button[type=submit]');if(submit.disabled)return;submit.disabled=true;try{const data=Object.fromEntries(new FormData(form));await api(registration?'register':'login','POST',data);if(location.hash)history.replaceState(null,'',location.pathname+location.search);dropCache();dispose();view='calendar';resetFilters();await refresh()}catch(error){notice(error.message)}finally{submit.disabled=false}})
   root.append(el('main',{class:'login compact-login'},el('section',{class:'auth'},el('div',{class:'auth-inner'},brand(),themeButton(),el('h2',{},registration?'Присоединиться':'Войти в календарь'),el('p',{class:'muted'},registration?'Введите код и придумайте пароль.':'Расписание занятий и свободное время.'),form,button(registration?'Уже есть аккаунт':'У меня есть код',()=>{authMode=registration?'login':'register';loginPage()},'link'),el('p',{id:'notice',role:'status',class:'notice'})))))
 }
 const fmt=new Intl.DateTimeFormat('ru-RU',{dateStyle:'medium',timeStyle:'short'})
 const dayFmt=new Intl.DateTimeFormat('ru-RU',{weekday:'short',day:'numeric',month:'short'})
 const timeFmt=new Intl.DateTimeFormat('ru-RU',{hour:'2-digit',minute:'2-digit'})
+const timeRange=(start,end)=>timeFmt.format(new Date(start))+' ('+utcOffset(start)+') — '+timeFmt.format(new Date(end))+' ('+utcOffset(end)+')'
+const dateRange=(start,end)=>fmt.format(new Date(start))+' ('+utcOffset(start)+') — '+fmt.format(new Date(end))+' ('+utcOffset(end)+')'
 const localInput=value=>{const d=new Date(value);return new Date(d.getTime()-d.getTimezoneOffset()*60000).toISOString().slice(0,16)}
 const visible=(withStatus=true)=>lessons.filter(l=>(!selectedTutor||l.tutor_id===selectedTutor)&&(!selectedStudent||l.student_id===selectedStudent)&&(!withStatus||!selectedStatus||statusOf(l)===selectedStatus)&&(!selectedPayment||paymentOf(l)===selectedPayment)&&(!selectedType||typeOf(l)===selectedType))
 const tutorOptions=()=>account?.role==='tutor'?[[account.id,account.name]]:users.filter(u=>u.role==='tutor').map(u=>[u.id,u.name])
@@ -93,20 +102,20 @@ function typeBadge(lesson){return el('span',{class:'type-badge type-'+typeOf(les
 function lessonDetails(lesson){
   const dialog=el('dialog',{class:'dialog details-dialog'})
   dialog.append(el('div',{class:'dialog-head'},el('h2',{},lesson.title),button('×',()=>dialog.close(),'icon')),el('div',{class:'lesson-badges'},statusBadge(statusOf(lesson)),typeBadge(lesson),shared?null:paymentBadge(lesson)),
-    el('dl',{class:'detail-grid'},el('dt',{},'Дата и время'),el('dd',{},fmt.format(new Date(lesson.start))+' — '+timeFmt.format(new Date(lesson.end))),el('dt',{},'Репетитор'),el('dd',{},lesson.tutor_name),el('dt',{},'Ученик'),el('dd',{},lesson.student_name),shared?null:el('dt',{},'Чек'),shared?null:el('dd',{},lesson.receipt_received===1?'Получен':'Не отмечен')),button('Закрыть',()=>dialog.close(),'secondary'))
+    el('dl',{class:'detail-grid'},el('dt',{},'Дата и время'),el('dd',{},dateRange(lesson.start,lesson.end)),el('dt',{},'Репетитор'),el('dd',{},lesson.tutor_name),el('dt',{},'Ученик'),el('dd',{},lesson.student_name),el('dt',{},'Предмет'),el('dd',{},subjectLabel(lesson.subject)),shared?null:el('dt',{},'Чек'),shared?null:el('dd',{},lesson.receipt_received===1?'Получен':'Не отмечен')),button('Закрыть',()=>dialog.close(),'secondary'))
   openDialog(dialog)
 }
 function assignmentDialog(){
   if(!tutorOptions().length||!studentOptions().length){notice('Сначала пригласите преподавателя и ученика.');return}
   const dialog=el('dialog',{class:'dialog'})
   const form=el('form',{class:'form'},el('div',{class:'dialog-head'},el('h2',{},'Закрепить ученика'),button('×',()=>dialog.close(),'icon')),field('Репетитор',select('tutor_id',tutorOptions(),selectedTutor||tutorOptions()[0][0])),field('Ученик',select('student_id',studentOptions(),selectedStudent||studentOptions()[0][0])),el('p',{class:'muted'},'Репетитор сможет создавать занятия с этим учеником.'),el('p',{role:'alert',class:'notice'}),el('button',{type:'submit',class:'primary'},'Закрепить'))
-  form.addEventListener('submit',async e=>{e.preventDefault();try{await api('assignments','POST',Object.fromEntries(new FormData(form)));dialog.close();notice('Ученик закреплён за репетитором.')}catch(error){form.querySelector('[role=alert]').textContent=error.message}})
+  form.addEventListener('submit',async e=>{e.preventDefault();try{await api('assignments','POST',Object.fromEntries(new FormData(form)));dialog.close();await refresh();notice('Ученик закреплён за репетитором.')}catch(error){form.querySelector('[role=alert]').textContent=error.message}})
   dialog.append(form);openDialog(dialog)
 }
 function lessonDialog(lesson,slot,slotEnd,exact=false){
   if(!canEdit()){if(lesson)lessonDetails(lesson);return}
   if(!tutorOptions().length){notice('Сначала добавьте репетитора в разделе «Участники».');return}
-  if(!studentOptions().length){studentDialog();return}
+  if(!studentOptions().length){if(account.role==='tutor')awaitStudentSelection();else studentDialog();return}
   const dialog=el('dialog',{class:'dialog'})
   const next=slot!=null?new Date(slot):new Date(Math.ceil((Date.now()+3600000)/1800000)*1800000)
   const start=lesson?.start||next.toISOString(),end=lesson?.end||new Date(exact&&slotEnd?Date.parse(slotEnd):Math.min(next.getTime()+3600000,slotEnd?Date.parse(slotEnd):Infinity)).toISOString()
@@ -117,12 +126,15 @@ function lessonDialog(lesson,slot,slotEnd,exact=false){
     field('Тип занятия',select('lesson_type',Object.entries(lessonTypes),lesson?typeOf(lesson):'regular')),
     field('Продолжительность',select('duration_preset',[['30','30 минут'],['45','45 минут'],['60','60 минут'],['90','90 минут'],['custom','Своя продолжительность']],lesson&&![30,45,60,90].includes(durationOf(lesson))?'custom':String(lesson?durationOf(lesson):[30,45,60,90].includes((Date.parse(end)-Date.parse(start))/60000)?(Date.parse(end)-Date.parse(start))/60000:'custom'))),
     el('div',{class:'date-fields'},field('Начало',input('start','datetime-local',{value:localInput(start)})),field('Конец',input('end','datetime-local',{value:localInput(end)}))),
-    field('Статус',select('status',Object.entries(statuses),lesson?statusOf(lesson):'tentative')),el('p',{class:'form-hint'},'Предварительное занятие резервирует время.'),
+    field('Статус занятия',select('status',Object.entries(statuses),lesson?statusOf(lesson):'tentative')),el('p',{class:'form-hint'},'Предварительное занятие резервирует время.'),
     el('fieldset',{class:'payment-panel'},el('legend',{},'Оплата'),field('Статус оплаты',select('payment_status',Object.entries(paymentStatuses),lesson?paymentOf(lesson):'unpaid')),el('label',{class:'receipt-option'},el('input',{type:'checkbox',name:'receipt_received',value:'1',...(lesson?.receipt_received===1?{checked:''}:{})}),'Чек получен'),el('p',{class:'form-hint'},'Ручная отметка, не банковское подтверждение.')),
     el('p',{role:'alert',class:'notice'}),el('button',{type:'submit',class:'primary'},'Сохранить'))
+  const subjectInfo=el('p',{class:'form-hint'});form.elements.student_id.closest('label').after(subjectInfo)
+  const syncSubject=()=>{subjectInfo.textContent='Предмет: '+subjectLabel(users.find(u=>u.id===form.elements.student_id.value)?.subject??(lesson?.student_id===form.elements.student_id.value?lesson.subject:null))};form.elements.student_id.addEventListener('change',syncSubject);syncSubject()
+  attachOffsets(form)
   const startField=form.elements.start,endField=form.elements.end,typeField=form.elements.lesson_type,preset=form.elements.duration_preset
   let duration=new Date(end).getTime()-new Date(start).getTime()
-  const syncEnd=()=>{if(startField.value)endField.value=localInput(new Date(new Date(startField.value).getTime()+duration))}
+  const syncEnd=()=>{if(startField.value)endField.value=localInput(new Date(new Date(startField.value).getTime()+duration));endField.dispatchEvent(new Event('input'))}
   const syncPreset=()=>{const minutes=duration/60000;preset.value=[30,45,60,90].includes(minutes)?String(minutes):'custom'}
   startField.addEventListener('change',syncEnd)
   endField.addEventListener('change',()=>{const diff=new Date(endField.value)-new Date(startField.value);if(diff>0){duration=diff;syncPreset()}})
@@ -138,19 +150,29 @@ function lessonDialog(lesson,slot,slotEnd,exact=false){
 }
 const canAvailability=()=>account?.role==='tutor'&&!offline&&!embed
 const showAvailability=()=>!embed&&!offline&&(account?.role==='tutor'||(account?.role==='admin'&&!!selectedTutor))
-function slotDialog(slot=null,at=null,until=null){
+function attachOffsets(form){
+  for(const name of ['start','end']){
+    const node=form.elements[name],label=node.closest('label').querySelector('span'),base=label.textContent
+    const update=()=>{const value=new Date(node.value);label.textContent=base+(Number.isFinite(value.getTime())?' ('+utcOffset(value)+')':'')}
+    node.addEventListener('input',update);node.addEventListener('change',update);update()
+  }
+}
+function slotDialog(slot=null,at=null,until=null,required=false){
   if(!canAvailability())return
   const dialog=el('dialog',{class:'dialog'})
   const rounded=new Date(at??Date.now());rounded.setMinutes(0,0,0);if(at===null&&rounded.getTime()<Date.now())rounded.setHours(rounded.getHours()+1)
   const start=slot?.start||new Date(until?at:rounded).toISOString()
   const end=slot?.end||new Date(until??Date.parse(start)+3600000).toISOString()
-  const form=el('form',{class:'form'},el('div',{class:'dialog-head'},el('h2',{},slot?'Изменить доступность':'Добавить свободное время'),button('×',()=>dialog.close(),'icon')),
+  const form=el('form',{class:'form'},el('div',{class:'dialog-head'},el('h2',{},slot?'Изменить доступность':required?'Укажите первое свободное время':'Добавить свободное время'),required?null:button('×',()=>dialog.close(),'icon')),
     field('Начало',input('start','datetime-local',{value:localInput(start)})),field('Конец',input('end','datetime-local',{value:localInput(end)})),el('p',{class:'form-hint'},'Задайте период, когда можете проводить занятия. Записанные уроки автоматически исключаются из свободного времени.'),el('p',{role:'alert',class:'notice'}),el('button',{type:'submit',class:'primary'},'Сохранить доступность'))
+  attachOffsets(form)
+  if(required){dialog.setAttribute('data-required','');dialog.addEventListener('cancel',e=>e.preventDefault())}
   const update=async(method,data)=>{try{await api('availability'+(slot?'/'+slot.id:''),method,data);dialog.close();await refresh()}catch(error){form.querySelector('[role=alert]').textContent=error.message}}
-  form.addEventListener('submit',async e=>{e.preventDefault();const submit=form.querySelector('button[type=submit]');submit.disabled=true;try{await update(slot?'PATCH':'POST',{start:new Date(form.elements.start.value).toISOString(),end:new Date(form.elements.end.value).toISOString()})}finally{submit.disabled=false}})
+  form.addEventListener('submit',async e=>{e.preventDefault();const submit=form.querySelector('button[type=submit]');submit.disabled=true;try{if(required&&new Date(form.elements.end.value).getTime()<=Date.now()){form.querySelector('[role=alert]').textContent='Выберите будущий интервал';return}await update(slot?'PATCH':'POST',{start:new Date(form.elements.start.value).toISOString(),end:new Date(form.elements.end.value).toISOString()})}finally{submit.disabled=false}})
   if(slot)form.append(button('Удалить интервал',()=>update('DELETE'),'secondary'))
   dialog.append(form);openDialog(dialog)
 }
+function maybePromptAvailability(){if(canAvailability()&&!availabilityPrompted&&!slots.some(s=>Date.parse(s.end)>Date.now())&&!document.querySelector('dialog[open]')){availabilityPrompted=true;availabilityOpen=true;render();slotDialog(null,null,null,true)}}
 function availabilityPanel(host){
   const own=canAvailability()
   const relevant=slots.filter(s=>own||s.tutor_id===selectedTutor)
@@ -158,13 +180,29 @@ function availabilityPanel(host){
   const panel=el('section',{class:'availability-panel'},el('div',{class:'availability-heading'},el('div',{},el('h3',{},'Доступность'),el('p',{class:'muted'},own?'Выберите интервалы, когда готовы проводить занятия.':'Свободные интервалы выбранного репетитора.')),own?button('+ Интервал',()=>slotDialog()):null,button('×',()=>{availabilityOpen=false;availabilityMode=false;render()},'icon')))
   if(own)panel.append(button(availabilityMode?'Режим: доступность (выключить)':'Отмечать свободное время в календаре',()=>{availabilityMode=!availabilityMode;view='calendar';render()},availabilityMode?'primary':'secondary'))
   const list=own?relevant:free
-  panel.append(el('div',{class:'availability-list'},list.length?list.map(slot=>el('div',{class:'availability-row'},el('span',{},fmt.format(new Date(slot.start))+' — '+fmt.format(new Date(slot.end))),own?button('Изменить',()=>slotDialog(slot)):button('Назначить',()=>lessonDialog(null,Date.parse(slot.start),slot.end)))):el('p',{class:'muted'},'Нет доступных интервалов.')))
+  panel.append(el('div',{class:'availability-list'},list.length?list.map(slot=>el('div',{class:'availability-row'},el('span',{},dateRange(slot.start,slot.end)),own?button('Изменить',()=>slotDialog(slot)):button('Назначить',()=>lessonDialog(null,Date.parse(slot.start),slot.end)))):el('p',{class:'muted'},'Нет доступных интервалов.')))
   host.append(panel)
 }
+async function awaitStudentSelection(){
+  try{
+    const {students}=await api('students/available')
+    if(!students.length){notice('Нет свободных учеников. Попросите администратора добавить или закрепить ученика.');return}
+    const dialog=el('dialog',{class:'dialog'})
+    const form=el('form',{class:'form'},el('div',{class:'dialog-head'},el('h2',{},'Добавить ученика себе'),button('×',()=>dialog.close(),'icon')),field('Ученик',select('student_id',students.map(u=>[u.id,u.name+' · '+subjectLabel(u.subject)]),students[0].id)),el('p',{role:'alert',class:'notice'}),el('button',{type:'submit',class:'primary'},'Закрепить'))
+    form.addEventListener('submit',async e=>{e.preventDefault();try{await api('assignments','POST',{student_id:form.elements.student_id.value});dialog.close();await refresh();notice('Ученик закреплён')}catch(error){form.querySelector('[role=alert]').textContent=error.message}})
+    dialog.append(form);openDialog(dialog)
+  }catch(error){notice(error.message)}
+}
+function editSubject(student){
+  const dialog=el('dialog',{class:'dialog'}),form=el('form',{class:'form'},el('div',{class:'dialog-head'},el('h2',{},student.name),button('×',()=>dialog.close(),'icon')),field('Предмет',select('subject',Object.entries(subjects),student.subject||'unspecified')),el('p',{role:'alert',class:'notice'}),el('button',{type:'submit',class:'primary'},'Сохранить'))
+  form.addEventListener('submit',async e=>{e.preventDefault();try{await api('students/'+student.id,'PATCH',{subject:form.elements.subject.value});dialog.close();await refresh()}catch(error){form.querySelector('[role=alert]').textContent=error.message}})
+  dialog.append(form);openDialog(dialog)
+}
 function studentDialog(){
+  if(account.role==='tutor'){awaitStudentSelection();return}
   const dialog=el('dialog',{class:'dialog'})
   const tutorSelect=select('tutor_id',[['','Без закрепления'],...tutorOptions()],selectedTutor);tutorSelect.required=false
-  const form=el('form',{class:'form'},el('div',{class:'dialog-head'},el('h2',{},'Добавить ученика'),button('×',()=>dialog.close(),'icon')),field('Имя',input('name','text',{maxlength:'120'})),account.role==='admin'?field('Репетитор',tutorSelect):null,el('p',{class:'form-hint'},'Регистрация не нужна. Ученик сразу доступен для записи.'),el('p',{role:'alert',class:'notice'}),el('button',{type:'submit',class:'primary'},'Создать'))
+  const form=el('form',{class:'form'},el('div',{class:'dialog-head'},el('h2',{},'Добавить ученика'),button('×',()=>dialog.close(),'icon')),field('Имя',input('name','text',{maxlength:'120'})),field('Предмет',select('subject',Object.entries(subjects),'unspecified')),account.role==='admin'?field('Репетитор',tutorSelect):null,el('p',{class:'form-hint'},'Регистрация не нужна. Ученик сразу доступен для записи.'),el('p',{role:'alert',class:'notice'}),el('button',{type:'submit',class:'primary'},'Создать'))
   form.addEventListener('submit',async e=>{e.preventDefault();try{await api('students','POST',Object.fromEntries(new FormData(form)));dialog.close();await refresh();notice('Ученик добавлен')}catch(error){form.querySelector('[role=alert]').textContent=error.message}})
   dialog.append(form);openDialog(dialog)
 }
@@ -175,21 +213,21 @@ function accessDialog(student){
     if(method==='DELETE'){out.textContent='Доступ отозван';return}
     const link=location.origin+(kind==='share'?'/schedule#code=':'/#invite=')+encodeURIComponent(data.code)
     const value=el('input',{readonly:'',value:link,'aria-label':'Личная ссылка'})
-    out.replaceChildren(el('p',{},kind==='share'?'Личная ссылка действует 30 дней. Любой, у кого она есть, видит расписание.':'Одноразовая ссылка действует 7 дней. Ученик сам задаст логин и пароль.'),value,button('Копировать',async()=>{try{await navigator.clipboard.writeText(link)}catch{value.select()}}))
+    out.replaceChildren(el('p',{},kind==='share'?'Личная ссылка действует 30 дней. Любой, у кого она есть, видит расписание.':'Одноразовая ссылка действует 7 дней. Ученик сам задаст логин и пароль.'),kind==='claim'?el('p',{},'Код: '+data.code):null,value,button('Копировать',async()=>{try{await navigator.clipboard.writeText(link)}catch{value.select()}}))
   }catch(error){out.textContent=error.message}}
   dialog.append(el('div',{class:'dialog-head'},el('h2',{},student.name),button('×',()=>dialog.close(),'icon')),el('div',{class:'form'},button('Личная ссылка на расписание',()=>issue('share'),'primary'),button('Отозвать ссылку',()=>issue('share','DELETE')),student.guest?button('Пригласить создать аккаунт',()=>issue('claim')):null,student.guest?button('Отозвать приглашение',()=>issue('claim','DELETE')):null,out))
   openDialog(dialog)
 }
 function helpPanel(host){
-  host.append(el('section',{class:'help-panel'},el('h2',{},'Как пользоваться календарём'),el('p',{},'Нажмите свободную ячейку или выделите мышью интервал. Правый клик на свободном времени также открывает создание. Нажмите занятие для подробностей. Потяните нижний край события мышью, чтобы изменить окончание.'),el('h3',{},'Репетитор'),el('p',{},'Кнопка «Доступность» открывает интервалы. Включите режим отметки, выделите время, сохраните. Занятые уроками часы автоматически исключаются.'),el('h3',{},'Ученики и оплата'),el('p',{},'Создайте ученика без регистрации, выберите его в занятии, отметьте договорённость и оплату. Администратор выдаёт личную ссылку или приглашение.'),el('h3',{},'Горячие клавиши'),el('p',{},'N — новое занятие, A — доступность, Esc — закрыть диалог. Тема сохраняется на устройстве.')))
+  host.append(el('section',{class:'help-panel'},el('h2',{},'Как пользоваться календарём'),el('p',{},'Нажмите свободную ячейку или выделите мышью интервал. Правый клик на свободном времени также открывает создание. Нажмите занятие для подробностей. Потяните нижний край события мышью, чтобы изменить окончание.'),el('h3',{},'Репетитор'),el('p',{},'Кнопка «Доступность» открывает интервалы. Включите режим отметки, выделите время, сохраните. Занятые уроками часы автоматически исключаются.'),el('h3',{},'Ученики и оплата'),el('p',{},'Администратор создаёт ученика без регистрации; репетитор закрепляет свободного ученика за собой. Выберите его в занятии, отметьте договорённость и оплату. Администратор выдаёт личную ссылку или приглашение.'),el('h3',{},'Горячие клавиши'),el('p',{},'N — новое занятие, A — доступность, Esc — закрыть диалог. Тема сохраняется на устройстве.')))
 }
 function inviteDialog(){
   const dialog=el('dialog',{class:'dialog'})
   const form=el('form',{class:'form'},el('div',{class:'dialog-head'},el('h2',{},'Пригласить'),button('×',()=>dialog.close(),'icon')),field('Роль',select('role',[['tutor','Репетитор'],['student','Ученик']],'tutor')),el('button',{class:'primary',type:'submit'},'Создать одноразовый код'),el('div',{class:'invite-output',role:'status'}))
-  form.addEventListener('submit',async e=>{e.preventDefault();const out=form.querySelector('.invite-output');try{const data=await api('invites','POST',Object.fromEntries(new FormData(form)));out.replaceChildren(el('p',{},'Код действует 7 дней. Передайте его лично.'),el('input',{readonly:'',value:data.code,'aria-label':'Пригласительный код'}),button('Копировать ссылку',async()=>{try{await navigator.clipboard.writeText(location.origin+'/#invite='+encodeURIComponent(data.code))}catch{out.querySelector('input').select()}}))}catch(error){out.textContent=error.message}})
+  form.addEventListener('submit',async e=>{e.preventDefault();const out=form.querySelector('.invite-output');try{const data=await api('invites','POST',Object.fromEntries(new FormData(form)));out.replaceChildren(el('p',{},'Код действует 7 дней, используется один раз. Учитывается регистр символов.'),el('input',{readonly:'',value:data.code,'aria-label':'Пригласительный код'}),button('Копировать ссылку',async()=>{try{await navigator.clipboard.writeText(location.origin+'/#invite='+encodeURIComponent(data.code))}catch{out.querySelector('input').select()}}))}catch(error){out.textContent=error.message}})
   dialog.append(form);openDialog(dialog)
 }
-function card(l){return el('button',{type:'button',class:'lesson status-'+statusOf(l)+' type-'+typeOf(l),onclick:()=>lessonDialog(l)},el('span',{class:'muted'},timeFmt.format(new Date(l.start))+' — '+timeFmt.format(new Date(l.end))),el('strong',{},l.title),el('small',{},l.tutor_name+' · '+l.student_name),el('div',{class:'lesson-badges'},statusBadge(statusOf(l)),typeBadge(l),shared?null:paymentBadge(l),!shared&&l.receipt_received===1?el('span',{class:'receipt-badge'},'Чек ✓'):null))}
+function card(l){return el('button',{type:'button',class:'lesson status-'+statusOf(l)+' type-'+typeOf(l),onclick:()=>lessonDialog(l)},el('span',{class:'muted'},timeRange(l.start,l.end)),el('strong',{},l.title),el('small',{},l.tutor_name+' · '+l.student_name+' · '+subjectLabel(l.subject)),el('div',{class:'lesson-badges'},statusBadge(statusOf(l)),typeBadge(l),shared?null:paymentBadge(l),!shared&&l.receipt_received===1?el('span',{class:'receipt-badge'},'Чек ✓'):null))}
 function board(host){
   const groups=new Map()
   for(const lesson of visible()){const d=new Date(lesson.start),key=d.getFullYear()+'-'+d.getMonth()+'-'+d.getDate();if(!groups.has(key))groups.set(key,{date:d,lessons:[]});groups.get(key).lessons.push(lesson)}
@@ -216,6 +254,7 @@ function render(){
     if(selectedTutor||selectedStudent||selectedStatus||selectedPayment||selectedType)filters.append(button('Сбросить',()=>{selectedTutor='';selectedStudent='';selectedStatus='';selectedPayment='';selectedType='';render()},'secondary'))
     const controlsBar=el('div',{class:'calendar-tools'},button(filtersOpen?'Скрыть фильтры':'Фильтры',()=>{filtersOpen=!filtersOpen;render()},'secondary'),!shared&&!embed&&(admin||canAvailability())?button(availabilityOpen?'Скрыть доступность':'Доступность'+(canAvailability()&&!slots.some(s=>Date.parse(s.end)>Date.now())?' · !':''),()=>{availabilityOpen=!availabilityOpen;availabilityMode=false;render()},availabilityOpen?'primary':'secondary'):null)
     if(canAvailability()&&!slots.some(s=>Date.parse(s.end)>Date.now())&&!availabilityOpen)controlsBar.append(el('span',{class:'availability-alert',role:'status'},'Нет будущих интервалов'))
+    if(view==='calendar'){const zoom=el('input',{type:'range',min:'600',max:'2200',step:'100',value:String(gridHeight),'aria-label':'Масштаб календаря'});zoom.addEventListener('change',()=>{gridHeight=Number(zoom.value);localStorage.setItem('calendar-ops-grid-height',String(gridHeight));render()});controlsBar.append(el('label',{class:'zoom-control'},el('span',{},'Масштаб'),zoom,el('span',{},Math.round(gridHeight/10)+'%')))}
     host.append(controlsBar);if(filtersOpen||view==='board')host.append(filters);else if(admin){const quick=select('quick_tutor',[['','Все репетиторы'],...tutorOptions()],selectedTutor);quick.setAttribute('aria-label','Репетитор');quick.addEventListener('change',()=>{selectedTutor=quick.value;render()});controlsBar.prepend(quick)}
     if(!shared&&(filtersOpen||view==='board'))host.append(el('div',{class:'calendar-legend'},...Object.keys(statuses).map(statusBadge),el('span',{class:'type-badge type-trial'},'Пробное'),el('span',{class:'payment-badge payment-paid'},'✓ Оплачено'),el('span',{class:'payment-badge payment-unpaid'},'○ Не оплачено')))
   }
@@ -226,7 +265,7 @@ function render(){
   main.append(host)
   root.append(el('div',{class:(embed||fullscreen||shared?'layout embedded':'layout')+(view==='calendar'?' calendar-layout':'')},(embed||fullscreen||shared)?null:sidebar,main))
   if(view==='users'&&!admin&&!canAvailability()){view='calendar';render();return}
-  if(view==='users'){host.append(el('div',{class:'people'},users.map(u=>el('article',{},el('span',{class:'avatar'},u.name[0]),el('div',{},el('strong',{},u.name),el('small',{},u.guest?'Без аккаунта':u.username||roles[u.role])),el('span',{class:'pill'},roles[u.role]),admin&&u.role==='student'?button('Доступ',()=>accessDialog(u)):null))));return}
+  if(view==='users'){host.append(el('div',{class:'people'},users.map(u=>el('article',{},el('span',{class:'avatar'},u.name[0]),el('div',{},el('strong',{},u.name),el('small',{},u.guest?'Без аккаунта':u.role==='student'?'Аккаунт активирован':u.username||roles[u.role]),u.role==='student'?el('small',{},subjectLabel(u.subject)+' · '+(u.tutors?.map(t=>t.name).join(', ')||'Не закреплён')):null),el('span',{class:'pill'},roles[u.role]),admin&&u.role==='student'?button('Доступ',()=>accessDialog(u)):null,admin&&u.role==='student'?button('Предмет',()=>editSubject(u)):null))));return}
   if(view==='help'){helpPanel(host);return}
   if(view==='stats'){host.append(el('div',{class:'metrics'},...Object.entries(paymentStatuses).map(([key,label])=>el('article',{},el('span',{class:'muted'},label),el('strong',{},lessons.filter(l=>paymentOf(l)===key).length))),el('article',{},el('span',{class:'muted'},'Пробные'),el('strong',{},lessons.filter(l=>typeOf(l)==='trial').length))));return}
   if(view==='board'){board(host);return}
@@ -234,9 +273,9 @@ function render(){
   const zone=Intl.DateTimeFormat().resolvedOptions().timeZone||'UTC'
   controls=createCalendarControlsPlugin()
   const calendars=Object.fromEntries(Object.entries(statusColors).map(([key,[main,container,onContainer]])=>[key,{colorName:key,lightColors:{main,container,onContainer},darkColors:{main,container:'#263142',onContainer:'#f0f3f8'}}]))
-  calendar=createCalendar({locale:'ru-RU',timezone:zone,firstDayOfWeek:1,views:[createViewDay(),createViewWeek(),createViewMonthGrid(),createViewList()],defaultView:calendarView||(matchMedia('(max-width: 700px)').matches?'day':'week'),...(selectedDate?{selectedDate}:{}),plugins:[controls,createCurrentTimePlugin()],calendars,isDark:theme==='dark',weekOptions:{gridStep:30,gridHeight:1000},
+  calendar=createCalendar({locale:'ru-RU',timezone:zone,firstDayOfWeek:1,views:[createViewDay(),createViewWeek(),createViewMonthGrid(),createViewList()],defaultView:calendarView||(matchMedia('(max-width: 700px)').matches?'day':'week'),...(selectedDate?{selectedDate}:{}),plugins:[controls,createCurrentTimePlugin()],calendars,isDark:theme==='dark',weekOptions:{gridStep:30,gridHeight},
     backgroundEvents:showAvailability()?freeSlots.filter(s=>account.role==='tutor'||s.tutor_id===selectedTutor).map(s=>({start:Temporal.Instant.from(s.start).toZonedDateTimeISO(zone),end:Temporal.Instant.from(s.end).toZonedDateTimeISO(zone),style:{backgroundColor:theme==='dark'?'#153b2a':'#dcfce7',border:'1px dashed '+(theme==='dark'?'#32794f':'#86efac'),pointerEvents:'none'},title:'Свободное время'})):[],
-    events:visible().map(l=>({id:l.id,title:(shared?'':paymentOf(l)==='paid'?'✓ ':'○ ')+(typeOf(l)==='trial'?'Пробное · ':'')+l.title+' · '+(account.role==='student'?l.tutor_name:l.student_name),calendarId:statusOf(l),_options:{additionalClasses:['lesson-event','status-'+statusOf(l),'type-'+typeOf(l),'payment-'+paymentOf(l)]},start:Temporal.Instant.from(l.start).toZonedDateTimeISO(zone),end:Temporal.Instant.from(l.end).toZonedDateTimeISO(zone),description:[statuses[statusOf(l)],lessonTypes[typeOf(l)],shared?'':paymentStatuses[paymentOf(l)],l.tutor_name,l.student_name].filter(Boolean).join(' · ')})),
+    events:visible().map(l=>({id:l.id,title:[statuses[statusOf(l)],lessonTypes[typeOf(l)],shared?'':paymentStatuses[paymentOf(l)],l.title,subjectLabel(l.subject)].filter(Boolean).join(' · ')+' · '+(account.role==='student'?l.tutor_name:l.student_name),calendarId:statusOf(l),_options:{additionalClasses:['lesson-event','status-'+statusOf(l),'type-'+typeOf(l),'payment-'+paymentOf(l)]},start:Temporal.Instant.from(l.start).toZonedDateTimeISO(zone),end:Temporal.Instant.from(l.end).toZonedDateTimeISO(zone),description:[statuses[statusOf(l)],lessonTypes[typeOf(l)],shared?'':paymentStatuses[paymentOf(l)],l.tutor_name,l.student_name,subjectLabel(l.subject),timeRange(l.start,l.end)].filter(Boolean).join(' · ')})),
     callbacks:{onEventClick(event){if(Date.now()<suppressClickUntil)return;const lesson=lessons.find(l=>l.id===event.id);if(lesson)lessonDialog(lesson)},onClickDate(date){if(canEdit()){const at=Number(date.toPlainDateTime({hour:9}).toZonedDateTime(zone).epochMilliseconds);availabilityMode?slotDialog(null,at):lessonDialog(null,at)}},onClickDateTime(dateTime){if(Date.now()<suppressClickUntil)return;const at=Number(dateTime.epochMilliseconds);if(availabilityMode&&canAvailability())slotDialog(null,at);else if(canEdit()){const free=showAvailability()?freeSlots.find(s=>(account.role==='tutor'||s.tutor_id===selectedTutor)&&Date.parse(s.start)<=at&&Date.parse(s.end)>at):null;lessonDialog(null,at,free?.end)}}}})
   calendar.render(mount)
   installGridInteractions(mount,zone)
@@ -271,7 +310,7 @@ function installGridInteractions(mount,zone){
   mount.addEventListener('pointercancel',cleanup)
   mount.addEventListener('lostpointercapture',cleanup)
   mount.addEventListener('contextmenu',e=>{if(!canEdit()||e.target.closest('.sx__event'))return;const day=e.target.closest('[data-time-grid-date]');if(day){e.preventDefault();create(getTime(day,e.clientY))}})
-  mount.addEventListener('pointerover',e=>{const event=e.target.closest('[data-event-id]');if(!event)return;const l=lessons.find(x=>x.id===event.dataset.eventId);if(l)event.title=[l.title,l.student_name,l.tutor_name,statuses[statusOf(l)],shared?'':paymentStatuses[paymentOf(l)],timeFmt.format(new Date(l.start))+'–'+timeFmt.format(new Date(l.end))].filter(Boolean).join(' · ')})
+  mount.addEventListener('pointerover',e=>{const event=e.target.closest('[data-event-id]');if(!event)return;const l=lessons.find(x=>x.id===event.dataset.eventId);if(l)event.title=[l.title,l.student_name,l.tutor_name,statuses[statusOf(l)],lessonTypes[typeOf(l)],shared?'':paymentStatuses[paymentOf(l)],subjectLabel(l.subject),timeRange(l.start,l.end)].filter(Boolean).join(' · ')})
 }
 async function refresh(){
   try{
@@ -280,7 +319,7 @@ async function refresh(){
     lessons=(await api('lessons')).lessons
     users=!embed?(account.role==='admin'?(await api('users')).users:account.role==='tutor'?(await api('students')).students:[]):[]
     const availability=!embed&&account.role!=='student'?await api('availability'):{slots:[],free:[]};slots=availability.slots;freeSlots=availability.free
-    offline=false;snapshot();render()
+    offline=false;snapshot();render();maybePromptAvailability()
   }catch(error){
     if(error.status===401){dropCache();account=null;lessons=[];users=[];slots=[];freeSlots=[];dispose();resetFilters();view='calendar';loginPage();return}
     if(!error.status&&!embed&&!shared){try{const saved=optedIn()&&JSON.parse(localStorage.getItem(CACHE));if(saved?.account){account=saved.account;lessons=saved.lessons;users=[];offline=true;view='board';render();notice('Офлайн-копия от '+fmt.format(new Date(saved.saved))+' · Только чтение');return}}catch{}}
