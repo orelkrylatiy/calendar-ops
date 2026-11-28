@@ -1,4 +1,4 @@
-const CACHE='calendar-ops-shell-v4'
+const CACHE='calendar-ops-shell-v5'
 self.addEventListener('install',event=>event.waitUntil((async()=>{
   const cache=await caches.open(CACHE)
   const response=await fetch('/',{cache:'reload'})
@@ -6,7 +6,7 @@ self.addEventListener('install',event=>event.waitUntil((async()=>{
   const html=await response.clone().text()
   const assets=[...html.matchAll(/(?:src|href)="(\/assets\/[^"]+)"/g)].map(m=>m[1])
   await cache.put('/',response)
-  await cache.addAll([...new Set(assets.concat(['/manifest.webmanifest','/icon.svg']))])
+  await cache.addAll([...new Set(assets.concat(['/manifest.webmanifest','/icon.svg','/favicon.svg']))])
   await self.skipWaiting()
 })()))
 self.addEventListener('activate',event=>event.waitUntil((async()=>{
@@ -19,7 +19,7 @@ self.addEventListener('fetch',event=>{
   if(event.request.mode==='navigate'&&['/','/calendar'].includes(url.pathname)){
     event.respondWith(fetch(event.request).catch(()=>caches.match('/')));return
   }
-  if(url.pathname.startsWith('/assets/')||['/icon.svg','/manifest.webmanifest'].includes(url.pathname)){
+  if(url.pathname.startsWith('/assets/')||['/icon.svg','/favicon.svg','/manifest.webmanifest'].includes(url.pathname)){
     event.respondWith((async()=>{
       const cached=await caches.match(event.request)
       if(cached)return cached
