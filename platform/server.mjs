@@ -11,6 +11,10 @@ const token = () => randomBytes(32).toString('base64url')
 // Human-entered codes use 36 random bits; session and reusable share tokens stay long.
 const shortCode = () => randomBytes(5).toString('base64url').slice(0,6)
 const subjects = ['unspecified','slovak','italian','german','english','spanish']
+const languages = [...subjects.filter(x=>x!=='unspecified'),'slavic']
+const labels={slovak:'Словацкий язык',slavic:'Славянские языки',italian:'Итальянский язык',german:'Немецкий язык',english:'Английский язык',spanish:'Испанский язык'}
+const tutorLanguages=value=>{if(!Array.isArray(value)||!value.length||value.some(x=>!languages.includes(x)))fail(400,'Выберите языки репетитора');return [...new Set(value)]}
+const description=value=>{if(typeof value!=='string'||value.trim().length>2000)fail(400,'Описание: до 2000 символов');return value.trim()}
 const subject = value => {if(!subjects.includes(value))fail(400,'Выберите предмет');return value}
 const fail = (status, message) => { throw Object.assign(new Error(message), { status }) }
 const passwordHash = password => {
@@ -98,6 +102,14 @@ export function createApp({dbPath=process.env.CALENDAR_DB || resolve(here,'data/
     catch(e){db.exec('ROLLBACK');throw e}
   }
   const minPassword=6
+  tx(()=>{
+    const cols=new Set(all('PRAGMA table_info(users)').map(c=>c.name))
+    if(!cols.has('description'))db.exec("ALTER TABLE users ADD COLUMN description TEXT NOT NULL DEFAULT ''")
+    if(!cols.has('languages'))db.exec("ALTER TABLE users ADD COLUMN languages TEXT NOT NULL DEFAULT '[]'")
+    if(!all('PRAGMA table_info(invites)').some(c=>c.name==='languages'))db.exec("ALTER TABLE invites ADD COLUMN languages TEXT NOT NULL DEFAULT '[]'")
+  })
+  const withLanguages=u=>({...u,languages:JSON.parse(u.languages||'[]')})
+  const accountView=u=>({...publicUser(u),...(u.role==='tutor'?{languages:JSON.parse(u.languages||'[]')}:{})})
   tx(()=>{if(!all('PRAGMA table_info(users)').some(c=>c.name==='guest'))db.exec('ALTER TABLE users ADD COLUMN guest INTEGER NOT NULL DEFAULT 0 CHECK(guest IN (0,1))')})
   tx(()=>{if(!all('PRAGMA table_info(users)').some(c=>c.name==='subject'))db.exec("ALTER TABLE users ADD COLUMN subject TEXT NOT NULL DEFAULT 'unspecified' CHECK(subject IN ('unspecified','slovak','italian','german','english','spanish'))")})
   db.exec(`CREATE TABLE IF NOT EXISTS student_access(hash TEXT PRIMARY KEY,student_id TEXT NOT NULL REFERENCES users(id),kind TEXT NOT NULL CHECK(kind IN ('claim','share')),expires INTEGER NOT NULL,UNIQUE(student_id,kind));`)
@@ -120,6 +132,10 @@ export function createApp({dbPath=process.env.CALENDAR_DB || resolve(here,'data/
     const columns=new Set(all('PRAGMA table_info(lessons)').map(c=>c.name))
     if(!columns.has('lesson_type')) db.exec("ALTER TABLE lessons ADD COLUMN lesson_type TEXT NOT NULL DEFAULT 'regular' CHECK(lesson_type IN ('regular','trial'))")
     if(!columns.has('payment_status')) db.exec("ALTER TABLE lessons ADD COLUMN payment_status TEXT NOT NULL DEFAULT 'unpaid' CHECK(payment_status IN ('unpaid','paid'))")
+    if(!columns.has('lesson_subject')){
+      db.exec("ALTER TABLE lessons ADD COLUMN lesson_subject TEXT NOT NULL DEFAULT 'unspecified'")
+      db.exec("UPDATE lessons SET lesson_subject=COALESCE((SELECT subject FROM users WHERE id=lessons.student_id),'unspecified')")
+    }
     if(!columns.has('receipt_received')) db.exec('ALTER TABLE lessons ADD COLUMN receipt_received INTEGER NOT NULL DEFAULT 0 CHECK(receipt_received IN (0,1))')
   })
   db.exec(`CREATE TABLE IF NOT EXISTS availability(id TEXT PRIMARY KEY,tutor_id TEXT NOT NULL REFERENCES users(id),start TEXT NOT NULL,end TEXT NOT NULL,CHECK(start<end));
@@ -136,7 +152,7 @@ export function createApp({dbPath=process.env.CALENDAR_DB || resolve(here,'data/
     const raw = sessionToken(req)
     const account = raw && get('SELECT u.* FROM users u JOIN sessions s ON s.user_id=u.id WHERE s.hash=? AND s.expires>?',hash(raw),Date.now())
     if(!account) fail(401,'Войдите в аккаунт')
-    return publicUser(account)
+    return accountView(account)
   }
   function admin(account) {if(account.role!=='admin') fail(403,'Недостаточно прав')}
   function login(req,res,account) {
@@ -145,7 +161,7 @@ export function createApp({dbPath=process.env.CALENDAR_DB || resolve(here,'data/
     run('DELETE FROM sessions WHERE expires<=?',Date.now())
     run('INSERT INTO sessions VALUES(?,?,?)',hash(raw),account.id,Date.now()+86400000)
     res.setHeader('Set-Cookie',cookie(raw,86400))
-    return json(res,200,{user:publicUser(account)})
+    return json(res,200,{user:accountView(account)})
   }
   const attempts = new Map()
   function limit(req) {
@@ -156,28 +172,33 @@ export function createApp({dbPath=process.env.CALENDAR_DB || resolve(here,'data/
     else {if(attempts.size>5000) fail(429,'Попробуйте позже');attempts.set(ip,{count:1,until:now+60000})}
   }
   const dummyHash=passwordHash(token())
-  const selectLessons='SELECT l.*, t.name AS tutor_name, s.name AS student_name, s.subject AS subject FROM lessons l JOIN users t ON t.id=l.tutor_id JOIN users s ON s.id=l.student_id'
+  const selectLessons='SELECT l.*, t.name AS tutor_name, s.name AS student_name, l.lesson_subject AS subject FROM lessons l JOIN users t ON t.id=l.tutor_id JOIN users s ON s.id=l.student_id'
   function saveLesson(account,data,id) {
     if(!['admin','tutor'].includes(account.role)) fail(403,'Недостаточно прав')
     return tx(()=>{
       const previous=id?get('SELECT * FROM lessons WHERE id=?',id):null
       if(id&&(!previous||(account.role==='tutor'&&previous.tutor_id!==account.id))) fail(404,'Занятие не найдено')
       const input={...previous,...data}
-      const title=clean(input.title), tutor=clean(input.tutor_id ?? (account.role==='tutor'?account.id:undefined)), student=clean(input.student_id)
+      const tutor=clean(input.tutor_id ?? (account.role==='tutor'?account.id:undefined)), student=clean(input.student_id)
       if(account.role==='tutor'&&(tutor!==account.id||!get('SELECT 1 FROM tutor_students WHERE tutor_id=? AND student_id=?',account.id,student))) fail(403,'Ученик не закреплён за вами')
+      const lessonSubject=data.subject??previous?.lesson_subject
+      if(!previous||data.subject!==undefined||tutor!==previous.tutor_id){
+        if(!languages.includes(lessonSubject)||!JSON.parse(get("SELECT languages FROM users WHERE id=? AND role='tutor'",tutor)?.languages||'[]').includes(lessonSubject))fail(400,'Этот язык не назначен репетитору')
+      }
+      const title=previous&&data.subject===undefined?previous.title:labels[lessonSubject]
       const type=input.lesson_type ?? 'regular', payment=input.payment_status ?? 'unpaid', receipt=input.receipt_received ?? 0
       if(!['regular','trial'].includes(type)) fail(400,'Некорректный тип занятия')
       if(!['paid','unpaid'].includes(payment)||![0,1].includes(receipt)) fail(400,'Некорректная отметка оплаты')
       if(previous&&previous.student_id!==student&&(previous.payment_status==='paid'||previous.receipt_received===1||payment==='paid'||receipt===1)) fail(409,'Сначала сбросьте оплату и отметку чека у прежнего ученика')
       const start=date(input.start), status=input.status ?? 'tentative'
-      const end=date(input.end ?? (!previous?new Date(Date.parse(start)+(type==='trial'?30:60)*60000).toISOString():undefined))
+      const end=date(input.end ?? (!previous?new Date(Date.parse(start)+60*60000).toISOString():undefined))
       if(start>=end || Date.parse(end)-Date.parse(start)>86400000) fail(400,'Проверьте длительность')
-      if(!['tentative','confirmed','completed','cancelled','no_show'].includes(status)) fail(400,'Некорректный статус')
+      if(!['tentative','confirmed','cancelled'].includes(status)&&status!==previous?.status) fail(400,'Некорректный статус')
       if(get('SELECT role FROM users WHERE id=?',tutor)?.role!=='tutor'||get('SELECT role FROM users WHERE id=?',student)?.role!=='student') fail(400,'Выберите преподавателя и ученика')
       if(status!=='cancelled'&&get("SELECT id FROM lessons WHERE status!='cancelled' AND id!=? AND (tutor_id=? OR student_id=?) AND start<? AND end>?",id||'',tutor,student,end,start)) fail(409,'В это время преподаватель или ученик уже занят')
       const lessonId=id||randomUUID()
-      if(id) run('UPDATE lessons SET title=?,tutor_id=?,student_id=?,start=?,end=?,status=?,lesson_type=?,payment_status=?,receipt_received=? WHERE id=?',title,tutor,student,start,end,status,type,payment,receipt,id)
-      else run('INSERT INTO lessons(id,title,tutor_id,student_id,start,end,status,lesson_type,payment_status,receipt_received) VALUES(?,?,?,?,?,?,?,?,?,?)',lessonId,title,tutor,student,start,end,status,type,payment,receipt)
+      if(id) run('UPDATE lessons SET title=?,tutor_id=?,student_id=?,start=?,end=?,status=?,lesson_type=?,payment_status=?,receipt_received=?,lesson_subject=? WHERE id=?',title,tutor,student,start,end,status,type,payment,receipt,lessonSubject,id)
+      else run('INSERT INTO lessons(id,title,tutor_id,student_id,start,end,status,lesson_type,payment_status,receipt_received,lesson_subject) VALUES(?,?,?,?,?,?,?,?,?,?,?)',lessonId,title,tutor,student,start,end,status,type,payment,receipt,lessonSubject)
       if(account.role==='admin') run('INSERT OR IGNORE INTO tutor_students VALUES(?,?)',tutor,student)
       const lesson=get('SELECT * FROM lessons WHERE id=?',lessonId)
       run('INSERT INTO audit(actor,action,lesson_id,before,after,created) VALUES(?,?,?,?,?,?)',account.id,id?'updated':'created',lessonId,previous?JSON.stringify(previous):null,JSON.stringify(lesson),new Date().toISOString())
@@ -238,7 +259,7 @@ export function createApp({dbPath=process.env.CALENDAR_DB || resolve(here,'data/
         const name=clean(input.name), handle=username(input.username), pass=passwordHash(password(input.password,minPassword))
         if(get('SELECT id FROM users WHERE username=?',handle)) fail(409,'Логин занят')
         const id=randomUUID()
-        run('INSERT INTO users(id,username,name,role,password) VALUES(?,?,?,?,?)',id,handle,name,invite.role,pass)
+        run('INSERT INTO users(id,username,name,role,password,languages) VALUES(?,?,?,?,?,?)',id,handle,name,invite.role,pass,invite.languages)
         run('UPDATE invites SET used=1 WHERE hash=?',code)
         return get('SELECT * FROM users WHERE id=?',id)
       })
@@ -249,9 +270,9 @@ export function createApp({dbPath=process.env.CALENDAR_DB || resolve(here,'data/
       run('DELETE FROM sessions WHERE hash=?',hash(sessionToken(req)));res.setHeader('Set-Cookie',cookie('',0));return json(res,200,{ok:true})
     }
     if(method==='GET'&&path==='/api/v1/me') return json(res,200,{user:account})
-    const roster=(where='',...args)=>all("SELECT u.id,u.name,u.role,u.guest,u.subject FROM users u WHERE u.role='student' "+where+" ORDER BY u.name",...args).map(u=>({...u,tutors:all("SELECT t.id,t.name FROM users t JOIN tutor_students ts ON t.id=ts.tutor_id WHERE ts.student_id=?"+(account.role==='tutor'?' AND t.id=?':'')+" ORDER BY t.name",u.id,...(account.role==='tutor'?[account.id]:[]))}))
+    const roster=(where='',...args)=>all("SELECT u.id,u.name,u.role,u.guest,u.subject,u.description FROM users u WHERE u.role='student' "+where+" ORDER BY u.name",...args).map(u=>({...u,tutors:all("SELECT t.id,t.name FROM users t JOIN tutor_students ts ON t.id=ts.tutor_id WHERE ts.student_id=?"+(account.role==='tutor'?' AND t.id=?':'')+" ORDER BY t.name",u.id,...(account.role==='tutor'?[account.id]:[]))}))
     if(method==='GET'&&path==='/api/v1/users'){
-      admin(account);return json(res,200,{users:all("SELECT id,username,name,role,guest FROM users WHERE role!='student' ORDER BY name").concat(roster())})
+      admin(account);return json(res,200,{users:all("SELECT id,username,name,role,guest,languages FROM users WHERE role!='student' ORDER BY name").map(withLanguages).concat(roster())})
     }
     if(method==='GET'&&path==='/api/v1/students'){
       if(account.role==='student') fail(403,'Недостаточно прав')
@@ -259,25 +280,26 @@ export function createApp({dbPath=process.env.CALENDAR_DB || resolve(here,'data/
       return json(res,200,{students})
     }
     if(method==='GET'&&path==='/api/v1/students/available'){
-      if(account.role!=='tutor')fail(403,'Недостаточно прав')
+      admin(account)
       return json(res,200,{students:roster('AND NOT EXISTS (SELECT 1 FROM tutor_students ts WHERE ts.student_id=u.id)')})
     }
     const studentMatch=path.match(/^\/api\/v1\/students\/([a-f0-9-]{36})$/)
     if(method==='PATCH'&&studentMatch){
       admin(account);const data=await body(req)
       if(!get("SELECT id FROM users WHERE id=? AND role='student'",studentMatch[1]))fail(404,'Ученик не найден')
-      run('UPDATE users SET subject=? WHERE id=?',subject(data.subject),studentMatch[1])
+      const old=get('SELECT subject,description FROM users WHERE id=?',studentMatch[1])
+      run('UPDATE users SET subject=?,description=? WHERE id=?',data.subject===undefined?old.subject:subject(data.subject),data.description===undefined?old.description:description(data.description),studentMatch[1])
       return json(res,200,{ok:true})
     }
     if(method==='POST'&&path==='/api/v1/students'){
       admin(account)
-      const data=await body(req),name=clean(data.name),tutor=data.tutor_id||null,language=subject(data.subject??'unspecified')
+      const data=await body(req),name=clean(data.name),tutor=data.tutor_id||null,language=subject(data.subject??'unspecified'),notes=description(data.description??'')
       const student=tx(()=>{
         if(tutor&&get('SELECT role FROM users WHERE id=?',tutor)?.role!=='tutor')fail(400,'Выберите репетитора')
         const id=randomUUID()
-        run('INSERT INTO users(id,username,name,role,password,guest,subject) VALUES(?,?,?,?,?,1,?)',id,'guest-'+id,name,'student',passwordHash(token()),language)
+        run('INSERT INTO users(id,username,name,role,password,guest,subject,description) VALUES(?,?,?,?,?,1,?,?)',id,'guest-'+id,name,'student',passwordHash(token()),language,notes)
         if(tutor)run('INSERT INTO tutor_students VALUES(?,?)',tutor,id)
-        return get('SELECT id,name,role,guest,subject FROM users WHERE id=?',id)
+        return get('SELECT id,name,role,guest,subject,description FROM users WHERE id=?',id)
       })
       return json(res,201,{student})
     }
@@ -295,20 +317,26 @@ export function createApp({dbPath=process.env.CALENDAR_DB || resolve(here,'data/
       return json(res,201,{code,expires:new Date(expires).toISOString()})
     }
     if(method==='POST'&&path==='/api/v1/assignments'){
-      if(!['admin','tutor'].includes(account.role))fail(403,'Недостаточно прав')
-      const data=await body(req),tutor=clean(data.tutor_id??account.id),student=clean(data.student_id)
+      admin(account)
+      const data=await body(req),tutor=clean(data.tutor_id),student=clean(data.student_id)
       tx(()=>{
-        if(account.role==='tutor'&&(tutor!==account.id||get('SELECT 1 FROM tutor_students WHERE student_id=? AND tutor_id!=?',student,tutor)))fail(403,'Ученик недоступен для закрепления')
         if(get('SELECT role FROM users WHERE id=?',tutor)?.role!=='tutor'||get('SELECT role FROM users WHERE id=?',student)?.role!=='student') fail(400,'Выберите преподавателя и ученика')
         run('INSERT OR IGNORE INTO tutor_students VALUES(?,?)',tutor,student)
       })
       return json(res,201,{ok:true})
     }
+    const tutorMatch=path.match(/^\/api\/v1\/tutors\/([a-f0-9-]{36})$/)
+    if(method==='PATCH'&&tutorMatch){
+      admin(account);const data=await body(req)
+      if(!get("SELECT id FROM users WHERE id=? AND role='tutor'",tutorMatch[1]))fail(404,'Репетитор не найден')
+      run('UPDATE users SET languages=? WHERE id=?',JSON.stringify(tutorLanguages(data.languages)),tutorMatch[1])
+      return json(res,200,{ok:true})
+    }
     if(method==='POST'&&path==='/api/v1/invites'){
-      admin(account);const {role}=await body(req)
+      admin(account);const {role,languages:requested}=await body(req)
       if(!['tutor','student'].includes(role)) fail(400,'Некорректная роль')
       const expires=Date.now()+7*86400000
-      const code=tx(()=>{const value=freshCode();run('INSERT INTO invites(hash,role,expires) VALUES(?,?,?)',hash(value),role,expires);return value})
+      const code=tx(()=>{const value=freshCode();run('INSERT INTO invites(hash,role,expires,languages) VALUES(?,?,?,?)',hash(value),role,expires,JSON.stringify(role==='tutor'?tutorLanguages(requested):[]));return value})
       return json(res,201,{code,expires:new Date(expires).toISOString(),role})
     }
     if(method==='GET'&&path==='/api/v1/availability'){
@@ -343,6 +371,7 @@ export function createApp({dbPath=process.env.CALENDAR_DB || resolve(here,'data/
     }
     if(method==='POST'&&path==='/api/v1/lessons') return json(res,201,{lesson:saveLesson(account,await body(req))})
     const match=path.match(/^\/api\/v1\/lessons\/([a-f0-9-]{36})$/)
+    if(method==='DELETE'&&match) return json(res,200,{lesson:saveLesson(account,{status:'cancelled'},match[1])})
     if(method==='PATCH'&&match) return json(res,200,{lesson:saveLesson(account,await body(req),match[1])})
     fail(404,'Не найдено')
   }
