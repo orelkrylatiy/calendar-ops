@@ -109,3 +109,5 @@ input:not([type=checkbox]),select{background:var(--surface);color:var(--ink);bor
 .sx__time-grid-event.lesson-event::after{content:'';position:absolute;bottom:1px;left:35%;right:35%;height:4px;border-radius:4px;background:currentColor;opacity:.35;pointer-events:none}
 
 .zoom-control{display:flex!important;align-items:center;gap:8px;flex-wrap:wrap;font-size:12px}.zoom-control input[type=range]{width:105px;padding:0;accent-color:currentColor}.people article{flex-wrap:wrap}.people article small{overflow-wrap:anywhere}
+
+.form textarea{font:inherit;resize:vertical;min-height:96px;width:100%;padding:11px 12px;border:1px solid var(--line);border-radius:10px;background:var(--surface,#fff);color:inherit}.form textarea:focus-visible{outline:2px solid #757575;outline-offset:3px}.details-dialog p{overflow-wrap:anywhere;white-space:pre-wrap}.form fieldset[hidden]{display:none}

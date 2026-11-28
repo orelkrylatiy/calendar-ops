@@ -7,10 +7,10 @@ A scheduling workspace for tutoring teams, based on the open-source [Schedule-X]
 ## Product
 
 - Administrator: invite tutors and students, view all lessons, filter by tutor, student or status, assign students to tutors, create and reschedule lessons.
-- Tutor: manage lessons with assigned students; student: read-only access to their own lessons. Invitation codes are one-time, role-bound and expire after seven days.
-- Lesson statuses: tentative (dashed, reserves the slot), confirmed (blue), completed (green), cancelled (muted), no-show (amber). Old scheduled lessons migrate to confirmed.
+- Tutor: manage lessons only with admin-assigned students; student: read-only access to their own lessons. Only admins create or assign students and configure tutor languages. Invitation codes are one-time, role-bound and expire after seven days.
+- Visible lesson statuses: tentative (dashed, reserves the slot) and confirmed (blue). Past active lessons count by end time; deletion removes the booking from the UI and retains an internal cancellation record for audit. Historical no-show/cancelled entries remain in storage but are excluded from visible totals.
 - Independent paid/unpaid tracking and optional manual receipt-received flag. Admins and assigned tutors edit; students read their own. No payment processing or receipt uploads.
-- Trial lessons: violet background, 30-minute default; regular lessons: 60-minute default. Quick 30/45/60/90-minute presets and custom end times.
+- Trial lessons: violet background; both types default to 60 minutes. Quick 30/45/60/90-minute presets and custom end times.
 - Tutor-managed date-specific availability; admin selects a tutor to see free intervals highlighted in the day/week calendar. Active lessons are subtracted; cancellation releases the slot. Scheduling outside declared availability remains allowed.
 - Schedule-X day/week/month/list calendar and a chronological board; responsive Russian UI.
 - Optional offline read-only snapshot on a trusted device; no offline write synchronization.
@@ -78,3 +78,7 @@ MIT. The original Schedule-X project is copyright Tom Österlund (2023–present
 ## Workspace v2
 
 Calendar-first interface with light/dark theme, `/calendar` full-screen view, separate statistics and help, collapsible availability, keyboard shortcuts (N/A), click/right-click/desktop range selection and current-time indicator. Create students in Participants without registration; admin can issue or revoke 30-day private schedule URLs or seven-day one-use activation links. No plaintext passwords are stored. Shared schedules omit payment details. Local password minimum is six characters; secure-cookie deployments require 12 for new credentials. Use long unique passwords even locally. Dependency audit workflow records full and runtime audit reports and proposes compatible lockfile updates; it does not automatically apply them.
+
+## Student profiles and tutor languages
+
+Admins add or edit private student descriptions (up to 2,000 characters), assign students, and select tutor languages at invitation time or on an existing tutor's card. Existing tutors need an explicit language assignment before creating new lessons. Tutors can read profiles of assigned students and their own lesson history/statistics. Lesson language is stored on the lesson and validated by the server, independently of the student's current subject. Old lesson titles remain available; their language is migrated from the student's subject at upgrade time. The lesson form uses a separate date picker, 24-hour start/end fields, 60-minute defaults for both lesson types, and mouse range selection. Elapsed lessons are inferred from the calendar, not verified attendance. The tab favicon is served at `/favicon.svg`.
